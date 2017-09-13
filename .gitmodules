@@ -1,0 +1,21 @@
+[submodule "libraries/Time"]
+	path = libraries/Time
+	url = https://github.com/PaulStoffregen/Time
+[submodule "libraries/Timezone"]
+	path = libraries/Timezone
+	url = https://github.com/JChristensen/Timezone
+[submodule "libraries/DS323RTC"]
+	path = libraries/DS323RTC
+	url = https://github.com/JChristensen/DS3232RTC
+[submodule "libraries/Adafruit_INA219"]
+	path = libraries/Adafruit_INA219
+	url = https://github.com/adafruit/Adafruit_INA219
+[submodule "libraries/SparkFun_BME280"]
+	path = libraries/SparkFun_BME280
+	url = https://github.com/sparkfun/SparkFun_BME280_Arduino_Library
+[submodule "libraries/SparkFun_HTU21D"]
+	path = libraries/SparkFun_HTU21D
+	url = https://github.com/sparkfun/SparkFun_HTU21D_Breakout_Arduino_Library
+[submodule "libraries/SparkFun_MPL3115A2"]
+	path = libraries/SparkFun_MPL3115A2
+	url = https://github.com/sparkfun/SparkFun_MPL3115A2_Breakout_Arduino_Library
