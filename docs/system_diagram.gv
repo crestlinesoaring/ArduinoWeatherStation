@@ -1,0 +1,41 @@
+// To generate the visualization, visit http://www.webgraphviz.com/
+// Paste all of the text below into the text box and click Generate Graph!
+
+digraph G {
+  node [shape=box];
+
+  Arduino [label="Arduino\nMega",margin=1];
+  BME280 [label="BME280\npressure\nsensor"];
+  ChargeController [label="Charge\ncontroller"];
+  DS3231 [label="DS3231\nreal-time\nclock"];
+  HTU21D [label="HTU21D\nhumidity\nsensor"];
+  INA219_1 [label="INA219\ncurrent\nsensor"];
+  INA219_2 [label="INA219\ncurrent\nsensor"];
+  LM2596 [label="LM2586\nDC-DC\nconverter"];
+  Rain [label="Rain\nsensor"];
+  Relay2 [label="Relay2\n(normally\nclosed)"];
+  Relay3 [label="Relay3\n(normally\nopen)"];
+  Relay4 [label="Relay4\n(normally\nclosed)"];
+  SolarPanel [label="Solar\npanel"];
+  W5100 [label="W5100\nEthernet\nshield"];
+  Windspeed [label="Wind\nspeed\nsensor"];
+
+  Arduino -> W5100 [label="SPI"];
+  BME280 -> Arduino [label="I2C"];
+  ChargeController -> LM2596 [label="12V"];
+  ChargeController -> Relay4 [label="12V"];
+  DS3231 -> Arduino [label="I2C"];
+  HTU21D -> Arduino [label="I2C"];
+  INA219_1 -> Arduino [label="I2C"];
+  INA219_1 -> Relay2 [label="12V"];
+  INA219_2 -> Arduino [label="I2C"];
+  INA219_2 -> Battery [label="12V"];
+  LM2596 -> Relay3 [label="5V"];
+  Rain -> Arduino [label="Analog\nvoltage"];
+  Relay2 -> ChargeController [label="12V"];
+  Relay3 -> Arduino [label="5V"];
+  Relay4 -> Fan [label="12V"];
+  Relay4 -> INA219_2 [label="12V"];
+  SolarPanel -> INA219_1;
+  Windspeed -> Arduino [label="Analog\nvoltage"];
+}
