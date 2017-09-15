@@ -53,7 +53,15 @@ HTU21D myHumidity; //Create an instance of the humidity sensor
 const byte WSPEED = 3;
 const byte RAIN = 2;
 const byte STAT1 = 7;
-const byte STAT2 = 8;
+const byte STAT2 = 8; //TODO: This pin (second status LED) seems wrong
+
+const byte PIN_ETH_DISABLE = 8; // Ethernet power control; on=LOW, off=HIGH
+const byte ETH_DISABLED = HIGH;
+const byte ETH_ENABLED = LOW;
+
+const byte PIN_UBIQUITI_ENABLE = 28; // Ubiquiti power control; off=LOW, on=HIGH
+const byte UBIQUITI_DISABLED = LOW;
+const byte UBIQUITI_ENABLED = HIGH;
 
 // analog I/O pins
 const byte WDIR = A0;
@@ -88,7 +96,7 @@ const int eeWatchdogTime = 11;
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 unsigned long lastSecond;   //The millis counter to see when a second rolls by
 unsigned long loopCounter;  //see how often we loop
-unsigned long loopDelta;    //see how many loops since the last print
+unsigned long loopDelta;    //see how many loops since the last printu
 unsigned long msTemp;       //store millis() now and then to see how long something took, for Serial.print()s all over
 unsigned long usTemp;       //store micros() now and then to see how long something took. Much smaller than millis!
 byte seconds;               //When it hits 60, increase the current minute
@@ -384,11 +392,11 @@ void setup()
   	  pinMode(30, OUTPUT);     //             common GND source for "YYD-3" FET switches.
       digitalWrite(30, LOW);   //             must always be low
 
-      pinMode(28, OUTPUT);     //             prepares Ubiquiti power control pin
-      digitalWrite(28, LOW);   //             turns Ubiquiti off (on=HIGH / off=low, default=on)
+      pinMode(PIN_UBIQUITI_ENABLE, OUTPUT);                  // prepares Ubiquiti power control pin
+      digitalWrite(PIN_UBIQUITI_ENABLE, UBIQUITI_DISABLED); // turns Ubiquiti off
 
-      pinMode(8, OUTPUT);      //             prepares ETH power control pin
-      digitalWrite(8, HIGH);   //             turns ETH shield off (on=low / off=HIGH, default=on)
+      pinMode(PIN_ETH_DISABLE, OUTPUT);      // prepares ETH power control pin
+      digitalWrite(PIN_ETH_DISABLE, ETH_DISABLED); // turns ETH shield off
 
     } else {
 	    Serial.print("Turning on Eth and Ubiquity... ");
@@ -397,11 +405,11 @@ void setup()
       pinMode(30, OUTPUT);     //             common GND source for "YYD-3" FET switches.
       digitalWrite(30, LOW);   //             must always be low
 
-      pinMode(28, OUTPUT);     //             prepares Ubiquiti power control pin
-      digitalWrite(28, HIGH);  //             turns Ubiquiti on (on=HIGH / off=low, default=on)
+      pinMode(PIN_UBIQUITI_ENABLE, OUTPUT);            // prepares Ubiquiti power control pin
+      digitalWrite(PIN_UBIQUITI_ENABLE, ETH_ENABLED); // turns Ubiquiti on
 
-      pinMode(8, OUTPUT);      //             prepares ETH power control pin
-      digitalWrite(8, LOW);    //             turns ETH shield on (on=low / off=HIGH, default=on)
+      pinMode(PIN_ETH_DISABLE, OUTPUT);      // prepares ETH power control pin
+      digitalWrite(PIN_ETH_DISABLE, ETH_ENABLED); // turns ETH shield on
 
   	}
     Serial.println("Done.");
@@ -839,11 +847,11 @@ void loop()
           if (!EEPROM.read(eePowerSave)) EEPROM.update(eePowerSave, true);
         }
 		
-        pinMode(28, OUTPUT);     //             prepares Ubiquiti power control pin
-        digitalWrite(28, LOW);   //             turns Ubiquiti off (on=HIGH / off=low, default=on)
+        pinMode(PIN_UBIQUITI_ENABLE, OUTPUT);                  // prepares Ubiquiti power control pin
+        digitalWrite(PIN_UBIQUITI_ENABLE, UBIQUITI_DISABLED); // turns Ubiquiti off
 
-        pinMode(8, OUTPUT);      //             prepares ETH power control pin
-        digitalWrite(8, HIGH);   //             turns ETH shield off (on=low / off=HIGH, default=on)
+        pinMode(PIN_ETH_DISABLE, OUTPUT);             // prepares ETH power control pin
+        digitalWrite(PIN_ETH_DISABLE, ETH_DISABLED); // turns ETH shield off
 
       } else {
 	    Serial.print(", which is Day time. We will switch to night at minute #");
@@ -855,11 +863,11 @@ void loop()
 		  
 		  //if powerSave was set, that means we're transitioning to daytime now.
 		  // Until I figure out how to restart the Ethernet, just force a watchdog timeout with delays.
-		    pinMode(28, OUTPUT);     //             prepares Ubiquiti power control pin
-        digitalWrite(28, HIGH);  //             turns Ubiquiti on (on=HIGH / off=low, default=on)
+		    pinMode(PIN_UBIQUITI_ENABLE, OUTPUT);                 // prepares Ubiquiti power control pin
+        digitalWrite(PIN_UBIQUITI_ENABLE, UBIQUITI_ENABLED); // turns Ubiquiti on
 
-        pinMode(8, OUTPUT);      //             prepares ETH power control pin
-        digitalWrite(8, LOW);    //             turns ETH shield on (on=low / off=HIGH, default=on)
+        pinMode(PIN_ETH_DISABLE, OUTPUT);            // prepares ETH power control pin
+        digitalWrite(PIN_ETH_DISABLE, ETH_ENABLED); // turns ETH shield on
 
 		  Serial.println(F("   ! ! !   We just switched to DAY. Since we can't reset ETHERNET very well, we are rebooting soon!!! ! ! "));
 		  delay(10000);
@@ -868,11 +876,11 @@ void loop()
         }
  		
 		//This below kind of doesn't count, because of the reboot above. We really should never get here.
-		    pinMode(28, OUTPUT);     //             prepares Ubiquiti power control pin
-        digitalWrite(28, HIGH);  //             turns Ubiquiti on (on=HIGH / off=low, default=on)
+		    pinMode(PIN_UBIQUITI_ENABLE, OUTPUT);                 // prepares Ubiquiti power control pin
+        digitalWrite(PIN_UBIQUITI_ENABLE, UBIQUITI_ENABLED); // turns Ubiquiti on
 
-        pinMode(8, OUTPUT);      //             prepares ETH power control pin
-        digitalWrite(8, LOW);    //             turns ETH shield on (on=low / off=HIGH, default=on)
+        pinMode(PIN_ETH_DISABLE, OUTPUT);            // prepares ETH power control pin
+        digitalWrite(PIN_ETH_DISABLE, ETH_ENABLED); // turns ETH shield on
 
       } // End of night/day figuring out (for power save)
 
