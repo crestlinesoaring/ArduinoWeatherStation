@@ -401,22 +401,22 @@ void setup()
     }
     
     // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
-	  Serial.print("Reading EEPROM to see power save state: ");
+    Serial.print("Reading EEPROM to see power save state: ");
    
     pinMode(30, OUTPUT);     //             common GND source for "YYD-3" FET switches. 
     digitalWrite(30, LOW);   //             must always be low
      
     if (EEPROM.read(eePowerSave)) {
-  	  Serial.print("Shutting off Eth and Ubiquity... ");
+      Serial.print("Shutting off Eth and Ubiquity... ");
       powerSave = true;
-  	  disableEthernet();
+      disableEthernet();
 
     } else {
-	    Serial.print("Turning on Eth and Ubiquity... ");
-  	  powerSave = false;
+      Serial.print("Turning on Eth and Ubiquity... ");
+      powerSave = false;
       enableEthernet();
 
-  	}
+    }
     Serial.println("Done.");
 
 
@@ -832,48 +832,48 @@ void loop()
       // Check every minute that we know sunrise/sunset for today. If not, calc it.
       if (day() > sunriseDay) getRiseSet();
 
-	  
+    
       /* * * * * * * * * * * * * * * * * *
-	   *  P O W E R   S A V E
-	   *  P O W E R   S A V E
-	   * * * * * * * * * * * * * * * * * */
+     *  P O W E R   S A V E
+     *  P O W E R   S A V E
+     * * * * * * * * * * * * * * * * * */
       // Turn off / on some peripherals at night & morning
       int minutesToday = hour() * 60 + minute();
-	  Serial.print("Minute of day is: ");
-	  Serial.print(minutesToday);
+      Serial.print("Minute of day is: ");
+      Serial.print(minutesToday);
       if ( (minutesToday < sunrise) or (minutesToday > sunset - 60) ) {     // jjj removed 60 to save even more   if ( (minutesToday < sunrise - 60) or (minutesToday > sunset - 60) ) {
 
         Serial.print(", which is Night time. We will switch to day at minute #");
-		Serial.println(sunrise);     // jjj removed 60 to save even more     Serial.println(sunrise - 60); 
+        Serial.println(sunrise);     // jjj removed 60 to save even more     Serial.println(sunrise - 60); 
         // We're not between "half an hour before sunrise" and sunset, so turn stuff off.
         // First set variables and record in eeprom that we're in power save mode.
         if (!powerSave) {
           powerSave = true;
           if (!EEPROM.read(eePowerSave)) EEPROM.update(eePowerSave, true);
         }
-		
+    
         disableEthernet();
 
       } else {
-	    Serial.print(", which is Day time. We will switch to night at minute #");
-		Serial.println(sunset - 60);
-	    // Otherwise, make sure things are TURNED ON
+        Serial.print(", which is Day time. We will switch to night at minute #");
+        Serial.println(sunset - 60);
+        // Otherwise, make sure things are TURNED ON
         if (powerSave) {
           powerSave = false;
           if (EEPROM.read(eePowerSave)) EEPROM.update(eePowerSave, false);
-		  
-		  //if powerSave was set, that means we're transitioning to daytime now.
-		  // Until I figure out how to restart the Ethernet, just force a watchdog timeout with delays.
-		    enableEthernet();
-
-		  Serial.println(F("   ! ! !   We just switched to DAY. Since we can't reset ETHERNET very well, we are rebooting soon!!! ! ! "));
-		  delay(10000);
-		  delay(20000);
-		  delay(30000);
+        
+          //if powerSave was set, that means we're transitioning to daytime now.
+          // Until I figure out how to restart the Ethernet, just force a watchdog timeout with delays.
+          enableEthernet();
+  
+          Serial.println(F("   ! ! !   We just switched to DAY. Since we can't reset ETHERNET very well, we are rebooting soon!!! ! ! "));
+          delay(10000);
+          delay(20000);
+          delay(30000);
         }
- 		
-		//This below kind of doesn't count, because of the reboot above. We really should never get here.
-		    enableEthernet();
+       
+        //This below kind of doesn't count, because of the reboot above. We really should never get here.
+        enableEthernet();
 
       } // End of night/day figuring out (for power save)
 
@@ -1438,117 +1438,117 @@ void printDigits(int digits){
 
 byte uploadWeather()
 {
-    if (powerSave) {
-	  Serial.println("UploadWeather() called, but NO DATA SENT because of Power Save mode.");
-	  return 50;
-	}
-	
-	// Connect to CSS website, do a PUT with weather values. Should be called once for every minute of weather data.
-    logSome(F("  uploadWeather called, building string. Bytes free: "));
-    logOneLine(freeRam());
-    byte uploadStatus = 90; //90 = haven't tried stopping the client yet.
+  if (powerSave) {
+    Serial.println("UploadWeather() called, but NO DATA SENT because of Power Save mode.");
+    return 50;
+  }
+  
+  // Connect to CSS website, do a PUT with weather values. Should be called once for every minute of weather data.
+  logSome(F("  uploadWeather called, building string. Bytes free: "));
+  logOneLine(freeRam());
+  byte uploadStatus = 90; //90 = haven't tried stopping the client yet.
 
-    // Preemptively close any open connections, to keep sockets available.
-    client.stop();
-    while (client.available()) { //read return from socket
-      Serial.write(client.read());
-    }
+  // Preemptively close any open connections, to keep sockets available.
+  client.stop();
+  while (client.available()) { //read return from socket
+    Serial.write(client.read());
+  }
 
-    uploadStatus = 100; //100 = stopped client, but haven't tried connecting.
+  uploadStatus = 100; //100 = stopped client, but haven't tried connecting.
+  
+  String strPut = makeUploadWeatherPut(getWeatherString());
+
+  //Serial.print(F(" before strPut, after strPut: "));
+  //Serial.println(freeRam());
+
+  char charPut[300];
+  for (int i = 0; i < 300; i++) {
+    charPut[i] = 'x';
+  }
+  charPut[299] = '\0';
+  int strPutLength = strPut.length() + 1;
+  Serial.print("strPut len: ");
+  Serial.println(strPutLength);
+  if (strPutLength > 298) strPutLength = 298;
+  strPut.toCharArray(charPut, strPutLength);
+
+  client.setTimeout(600);
+  int clientConnectStatus;
+  clientConnectStatus = client.connect(server, 80);
+  if (clientConnectStatus) {
+    logSome(F("Ether client connected for uploadWeather. Mem: "));
+    logSome(freeRam());
+    logSome(", connect status: ");
+    logOneLine(clientConnectStatus);
+    ethStopped = false;
     
-    String strPut = makeUploadWeatherPut(getWeatherString());
-
-    //Serial.print(F(" before strPut, after strPut: "));
-    //Serial.println(freeRam());
-
-    char charPut[300];
-    for (int i = 0; i < 300; i++) {
-      charPut[i] = 'x';
-    }
-    charPut[299] = '\0';
-    int strPutLength = strPut.length() + 1;
-    Serial.print("strPut len: ");
-    Serial.println(strPutLength);
-    if (strPutLength > 298) strPutLength = 298;
-    strPut.toCharArray(charPut, strPutLength);
-
-    client.setTimeout(600);
-    int clientConnectStatus;
-    clientConnectStatus = client.connect(server, 80);
-    if (clientConnectStatus) {
-      logSome(F("Ether client connected for uploadWeather. Mem: "));
-      logSome(freeRam());
-      logSome(", connect status: ");
-      logOneLine(clientConnectStatus);
-      ethStopped = false;
-      
-      // Make an HTTP request:
+    // Make an HTTP request:
     //logSome(strPut);
     //client.print(strPut);  //Single print so hopefully it goes out in one packet.
-      Serial.write(charPut, strPutLength); //for debugging
-      client.write(charPut, strPutLength); //Better chance of a single packet by using a char[].
-      ethLastMillis = millis();
-      uploadStatus = 0;
-      ethConnFails = 0;
-      ethTimeouts = 0;
-      
-    } else {
-      // if you didn't get a connection to the server:
-      logSome(F("connection failed, status: "));
-      logOneLine(clientConnectStatus);
-      ethLastFailureCode = clientConnectStatus;
-      client.stop();
-      ethStopped = true;
-      ethConnFails++;
-      uploadStatus = 200; // connection failed
-    }
+    Serial.write(charPut, strPutLength); //for debugging
+    client.write(charPut, strPutLength); //Better chance of a single packet by using a char[].
+    ethLastMillis = millis();
+    uploadStatus = 0;
+    ethConnFails = 0;
+    ethTimeouts = 0;
+    
+  } else {
+    // if you didn't get a connection to the server:
+    logSome(F("connection failed, status: "));
+    logOneLine(clientConnectStatus);
+    ethLastFailureCode = clientConnectStatus;
+    client.stop();
+    ethStopped = true;
+    ethConnFails++;
+    uploadStatus = 200; // connection failed
+  }
 
-    logSome(F("  uploadWeather() finished, free mem: "));
-    logOneLine(freeRam());
-    return uploadStatus;
+  logSome(F("  uploadWeather() finished, free mem: "));
+  logOneLine(freeRam());
+  return uploadStatus;
 }
 
 // Test with building strings, to use for the website request.
 String getWeatherString() {
-    String weatherString = "";
-    int tempc = RTC.temperature();
+  String weatherString = "";
+  int tempc = RTC.temperature();
 
-    // 1: time
-    if (hour() < 10) weatherString += String('0');
-    weatherString += String(hour());
-    weatherString += ":";
-    if (minute() < 10) weatherString += String('0');
-    weatherString += String(minute());
+  // 1: time
+  if (hour() < 10) weatherString += String('0');
+  weatherString += String(hour());
+  weatherString += ":";
+  if (minute() < 10) weatherString += String('0');
+  weatherString += String(minute());
 
-    // 2: date
-    weatherString += String(charComma);
-    weatherString += String(month());
-    weatherString += String(("/"));
-    weatherString += String(day());
-    weatherString += String(("/"));
-    weatherString += String(year());
+  // 2: date
+  weatherString += String(charComma);
+  weatherString += String(month());
+  weatherString += String(("/"));
+  weatherString += String(day());
+  weatherString += String(("/"));
+  weatherString += String(year());
 
-    // 3: Wind speed, mph, 1 minute average
-    weatherString += String(charComma);
-    if (windSpeedAvg < 9.5) weatherString += String('0');
-    weatherString += String(windSpeedAvg, 2);
- 
-    // 4: wind speed, mph, 5 minute max (gust)
-    weatherString += String(charComma);
-    if (windgustmph_5m < 9.5) weatherString += String('0');
-    weatherString += String(windgustmph_5m, 1);
+  // 3: Wind speed, mph, 1 minute average
+  weatherString += String(charComma);
+  if (windSpeedAvg < 9.5) weatherString += String('0');
+  weatherString += String(windSpeedAvg, 2);
 
-    // 5: wind direction, 1 minute average
-    weatherString += String(charComma);
-    if ((winddir < 10 ) and (winddir >= 0)) weatherString += String("0"); //pad with zeros to keep formatting nicer
-    if ((winddir < 100) and (winddir >= 0)) weatherString += String("0"); //pad with zeros to keep formatting nicer
-    weatherString += String(winddir);
-    //weatherString += String(",windgustdir=");
-    //weatherString += String(windgustdir);
+  // 4: wind speed, mph, 5 minute max (gust)
+  weatherString += String(charComma);
+  if (windgustmph_5m < 9.5) weatherString += String('0');
+  weatherString += String(windgustmph_5m, 1);
 
-    // 6: temperature, F, outside, instant
-    weatherString += String(charComma);
-    weatherString += String(bme280a.readTempF(), 2);
+  // 5: wind direction, 1 minute average
+  weatherString += String(charComma);
+  if ((winddir < 10 ) and (winddir >= 0)) weatherString += String("0"); //pad with zeros to keep formatting nicer
+  if ((winddir < 100) and (winddir >= 0)) weatherString += String("0"); //pad with zeros to keep formatting nicer
+  weatherString += String(winddir);
+  //weatherString += String(",windgustdir=");
+  //weatherString += String(windgustdir);
+
+  // 6: temperature, F, outside, instant
+  weatherString += String(charComma);
+  weatherString += String(bme280a.readTempF(), 2);
 // All this was before the BME280
 //    if (tempf < -1000) {
 //      weatherString += String((tempc * 0.45) + 32, 1);
@@ -1556,9 +1556,9 @@ String getWeatherString() {
 //      weatherString += String(tempf, 0);
 //    }
 
-    // 7: humidity, %, outside, instant from bme280a
-    weatherString += String(charComma);
-    weatherString += String(bme280a.readFloatHumidity(), 0);
+  // 7: humidity, %, outside, instant from bme280a
+  weatherString += String(charComma);
+  weatherString += String(bme280a.readFloatHumidity(), 0);
 // All this was before the BME280
 //    if (humidity < 200) {
 //      //weatherString += String(humidity, 1);
@@ -1566,9 +1566,9 @@ String getWeatherString() {
 //      weatherString += "0";
 //    }
 
-    // 8: Barometric pressure, hPa, outside, instant from bme280a
-    weatherString += String(charComma);
-    weatherString += String(bme280a.readFloatPressure() / 100.0, 2);
+  // 8: Barometric pressure, hPa, outside, instant from bme280a
+  weatherString += String(charComma);
+  weatherString += String(bme280a.readFloatPressure() / 100.0, 2);
 // All this wasbefore the BME280
 //    if (pressure > 0) {
 //      weatherString += String(pressure / 100.0, 1);
@@ -1576,329 +1576,329 @@ String getWeatherString() {
 //      weatherString += "0";
 //    }
 
-    // 9: Barometric pressure delta from previous reading
-    weatherString += String(charComma);
-    //if (pressure >= oldPressure) weatherString += String("+"); //can't have spaces in the URL, but using the + makes columns line up nicer.
-    //weatherString += String((pressure - oldPressure) / 100.0, 2);
+  // 9: Barometric pressure delta from previous reading
+  weatherString += String(charComma);
+  //if (pressure >= oldPressure) weatherString += String("+"); //can't have spaces in the URL, but using the + makes columns line up nicer.
+  //weatherString += String((pressure - oldPressure) / 100.0, 2);
+  weatherString += "0";
+
+  // 10: rain so far today
+  //weatherString += String(",rainin=");
+  //weatherString += String(rainin, 2);
+  weatherString += String(charComma);
+//    weatherString += String(0.0, 2);
+  weatherString += String(wxOwner);
+
+  // 11: rain long term? Maybe it's supposed to be last 24h, but it's always zero.
+  //weatherString += String(",dailyrainin=");
+  //weatherString += String(dailyrainin, 2);
+  weatherString += String(charComma);
+//    weatherString += String(0.0, 2);
+  weatherString += String(wxVersion);
+
+  // 11: wind speed, mph, instant (instead of 24h rain)
+  //weatherString += String(charComma);
+  //if (windspeedmph < 10) weatherString += String('0');
+  //weatherString += String(windspeedmph, 1);
+
+  // 12: temperature in the enclosure or 2nd sensor if we get one. In Celcius for Jimmy.
+  weatherString += String(charComma);
+  if (tempc) {
+    weatherString += String(tempc / 4.0, 2); //Dja
+  } else {
     weatherString += "0";
+  }
 
-    // 10: rain so far today
-    //weatherString += String(",rainin=");
-    //weatherString += String(rainin, 2);
-    weatherString += String(charComma);
-//    weatherString += String(0.0, 2);
-    weatherString += String(wxOwner);
+  // 13: Current on ina219 sensor A (raw battery @ 12v maybe?)
+  weatherString += String(charComma);
+  weatherString += String(ina219a_current, 2);
+  weatherString += String("mA");
 
-    // 11: rain long term? Maybe it's supposed to be last 24h, but it's always zero.
-    //weatherString += String(",dailyrainin=");
-    //weatherString += String(dailyrainin, 2);
-    weatherString += String(charComma);
-//    weatherString += String(0.0, 2);
-    weatherString += String(wxVersion);
+  // 14: Voltage on ina219 sensor A (raw battery @ 12v maybe?)
+  weatherString += String(charComma);
+  weatherString += String(ina219a_volts, 2);
+  weatherString += String("v");
+  //weatherString += String(batt_lvl, 2);
 
-    // 11: wind speed, mph, instant (instead of 24h rain)
-    //weatherString += String(charComma);
-    //if (windspeedmph < 10) weatherString += String('0');
-    //weatherString += String(windspeedmph, 1);
-
-    // 12: temperature in the enclosure or 2nd sensor if we get one. In Celcius for Jimmy.
-    weatherString += String(charComma);
-    if (tempc) {
-      weatherString += String(tempc / 4.0, 2); //Dja
-    } else {
-      weatherString += "0";
-    }
-
-    // 13: Current on ina219 sensor A (raw battery @ 12v maybe?)
-    weatherString += String(charComma);
-    weatherString += String(ina219a_current, 2);
-    weatherString += String("mA");
-
-    // 14: Voltage on ina219 sensor A (raw battery @ 12v maybe?)
-    weatherString += String(charComma);
-    weatherString += String(ina219a_volts, 2);
-    weatherString += String("v");
-    //weatherString += String(batt_lvl, 2);
-
-    // 15: Power on ina219 sensor A (watts battery)
-    weatherString += String(charComma);
-    weatherString += String(ina219a_volts * ina219a_current / 1000, 2);
-    weatherString += String("w");
+  // 15: Power on ina219 sensor A (watts battery)
+  weatherString += String(charComma);
+  weatherString += String(ina219a_volts * ina219a_current / 1000, 2);
+  weatherString += String("w");
 
 
-    // 16: Current on ina219 sensor B (after buck to 5v maybe?)
-    weatherString += String(charComma);
-    weatherString += String(ina219b_current, 2);
-    weatherString += String("mA");
+  // 16: Current on ina219 sensor B (after buck to 5v maybe?)
+  weatherString += String(charComma);
+  weatherString += String(ina219b_current, 2);
+  weatherString += String("mA");
 
-    // 17: Voltage on ina219 sensor A (after buck to 5v maybe?)
-    weatherString += String(charComma);
-    weatherString += String(ina219b_volts, 2);
-    weatherString += String("v");
-    //weatherString += String(batt_lvl, 2);
+  // 17: Voltage on ina219 sensor A (after buck to 5v maybe?)
+  weatherString += String(charComma);
+  weatherString += String(ina219b_volts, 2);
+  weatherString += String("v");
+  //weatherString += String(batt_lvl, 2);
 
-    // 18: Power on ina219 sensor A (watts battery)
-    weatherString += String(charComma);
-    weatherString += String(ina219b_volts * ina219b_current / 1000, 2);
-    weatherString += String("w");
+  // 18: Power on ina219 sensor A (watts battery)
+  weatherString += String(charComma);
+  weatherString += String(ina219b_volts * ina219b_current / 1000, 2);
+  weatherString += String("w");
 
 
 
-    // 19: light level, referenced to voltage I think
-    weatherString += String(charComma);
+  // 19: light level, referenced to voltage I think
+  weatherString += String(charComma);
 //    weatherString += String(light_lvl, 2);
-    weatherString += "0";
+  weatherString += "0";
 
-    // 20: run time in days.HH:MM:SS
-    weatherString += String(charComma);
-    weatherString += String(days);
-    weatherString += String(".");
-    if (hours < 10) weatherString += String('0');
-    weatherString += String(hours);
-    weatherString += String(":");
-    if (minutes < 10) weatherString += String('0');
-    weatherString += String(minutes);
-    weatherString += String(":");
-    if (seconds < 10) weatherString += String('0');
-    weatherString += String(seconds);
+  // 20: run time in days.HH:MM:SS
+  weatherString += String(charComma);
+  weatherString += String(days);
+  weatherString += String(".");
+  if (hours < 10) weatherString += String('0');
+  weatherString += String(hours);
+  weatherString += String(":");
+  if (minutes < 10) weatherString += String('0');
+  weatherString += String(minutes);
+  weatherString += String(":");
+  if (seconds < 10) weatherString += String('0');
+  weatherString += String(seconds);
 
-    /* 18: loop counter. For diagnostics, mostly useless.
-    weatherString += String(charComma);
-    weatherString += String(loopCounter);
-    weatherString += String(charComma);
-    weatherString += String(loopCounter - loopDelta);
-    loopDelta = loopCounter; */
+  /* 18: loop counter. For diagnostics, mostly useless.
+  weatherString += String(charComma);
+  weatherString += String(loopCounter);
+  weatherString += String(charComma);
+  weatherString += String(loopCounter - loopDelta);
+  loopDelta = loopCounter; */
 
-    // 18: print free memory? Interesting...
+  // 18: print free memory? Interesting...
 //    weatherString += String(charComma);
 //    weatherString += String(freeRam());
 
-    // 21: print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
-    if (true) {
-      weatherString += String(charComma);
-      weatherString += String("wd=");
-      weatherString += String(winddirRaw);
-    }
-    if (true) {
-      weatherString += String(charComma);
-      if (strWindDir.length() < 3) weatherString += String("_");
-      if (strWindDir.length() < 2) weatherString += String("_");
-      weatherString += strWindDir;
-    }
+  // 21: print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
+  if (true) {
+    weatherString += String(charComma);
+    weatherString += String("wd=");
+    weatherString += String(winddirRaw);
+  }
+  if (true) {
+    weatherString += String(charComma);
+    if (strWindDir.length() < 3) weatherString += String("_");
+    if (strWindDir.length() < 2) weatherString += String("_");
+    weatherString += strWindDir;
+  }
 
-    // 22+: Assorted info and error values
-    // Tack on a ,R if we've rebooted to make it easier to spot them
-    if(justRestarted) {
-      weatherString += ",R";
-    }
+  // 22+: Assorted info and error values
+  // Tack on a ,R if we've rebooted to make it easier to spot them
+  if(justRestarted) {
+    weatherString += ",R";
+  }
 
-    // add socket status as 8 hex chars
-    bool reportSockets = false;
+  // add socket status as 8 hex chars
+  bool reportSockets = false;
+  for (int i = 0; i < MAX_SOCK_NUM; i++) {
+    if (ethSockStatus[i] > 0) reportSockets = true;
+  }
+  if (reportSockets) {
+    weatherString += String(charComma);
     for (int i = 0; i < MAX_SOCK_NUM; i++) {
-      if (ethSockStatus[i] > 0) reportSockets = true;
+      if (ethSockStatus[i] < 17) weatherString += String("0");
+      weatherString += String(ethSockStatus[i], 16);
     }
-    if (reportSockets) {
-      weatherString += String(charComma);
-      for (int i = 0; i < MAX_SOCK_NUM; i++) {
-        if (ethSockStatus[i] < 17) weatherString += String("0");
-        weatherString += String(ethSockStatus[i], 16);
-      }
-    }
+  }
 
-    // If there have been failures, tack them on:
-    if (ethConnFails) {
-      weatherString += String(F(",EthConnFails="));
-      weatherString += String(ethConnFails);
-    }
-    if (ethTimeouts) {
-      weatherString += String(F(",Timeouts="));
-      weatherString += String(ethTimeouts);
-    }
-    if (ethLastFailureCode) {
-      weatherString += String(F(",failCode="));
-      weatherString += String(ethLastFailureCode);
-    }
-    if(reportWatchdog) {
-      weatherString += ",W-";
-      weatherString += String(year(reportWatchdog));
-      weatherString += String(("/"));
-      weatherString += String(month(reportWatchdog));
-      weatherString += String(("/"));
-      weatherString += String(day(reportWatchdog));
-      weatherString += String("@");
-      weatherString += String(hour(reportWatchdog));
-      weatherString += String((":"));
-      weatherString += String(minute(reportWatchdog));
-    }
+  // If there have been failures, tack them on:
+  if (ethConnFails) {
+    weatherString += String(F(",EthConnFails="));
+    weatherString += String(ethConnFails);
+  }
+  if (ethTimeouts) {
+    weatherString += String(F(",Timeouts="));
+    weatherString += String(ethTimeouts);
+  }
+  if (ethLastFailureCode) {
+    weatherString += String(F(",failCode="));
+    weatherString += String(ethLastFailureCode);
+  }
+  if(reportWatchdog) {
+    weatherString += ",W-";
+    weatherString += String(year(reportWatchdog));
+    weatherString += String(("/"));
+    weatherString += String(month(reportWatchdog));
+    weatherString += String(("/"));
+    weatherString += String(day(reportWatchdog));
+    weatherString += String("@");
+    weatherString += String(hour(reportWatchdog));
+    weatherString += String((":"));
+    weatherString += String(minute(reportWatchdog));
+  }
 
-    //Serial.println(weatherString);
-	weatherString.replace(" ", "");
-    return weatherString;
+  //Serial.println(weatherString);
+  weatherString.replace(" ", "");
+  return weatherString;
 }
 
 //Prints the various variables directly to the port
 //I don't like the way this function is written but Arduino doesn't support floats under sprintf
 void printWeather()
 {
-    //calcWeather(); //Go calc all the various sensors; except now call it directly from loop()
-    timeStatus();             //check the time status now to force a sync if needed.
+  //calcWeather(); //Go calc all the various sensors; except now call it directly from loop()
+  timeStatus();             //check the time status now to force a sync if needed.
 
-    // 1: time
-    printDigits(hour());
-    Serial.print((":"));
-    printDigits(minute());
+  // 1: time
+  printDigits(hour());
+  Serial.print((":"));
+  printDigits(minute());
 
-    // 2: date
-    Serial.print(charComma);
-    Serial.print(month());
-    Serial.print(("/"));
-    Serial.print(day());
-    Serial.print(("/"));
-    Serial.print(year());
+  // 2: date
+  Serial.print(charComma);
+  Serial.print(month());
+  Serial.print(("/"));
+  Serial.print(day());
+  Serial.print(("/"));
+  Serial.print(year());
 
-    // 3: Wind speed, mph, 1 minute average
-    Serial.print(charComma);
-    if (windSpeedAvg < 10) Serial.print('0');
-    Serial.print(windSpeedAvg, 2);
+  // 3: Wind speed, mph, 1 minute average
+  Serial.print(charComma);
+  if (windSpeedAvg < 10) Serial.print('0');
+  Serial.print(windSpeedAvg, 2);
 
-    // 4: wind speed, mph, 5 minute max (gust)
-    Serial.print(charComma);
-    if (windgustmph_5m < 10) Serial.print('0');
-    Serial.print(windgustmph_5m, 1);
+  // 4: wind speed, mph, 5 minute max (gust)
+  Serial.print(charComma);
+  if (windgustmph_5m < 10) Serial.print('0');
+  Serial.print(windgustmph_5m, 1);
 
-    // 5: wind direction, 1 minute average
-    Serial.print(charComma);
-    if (winddir == 0 ) Serial.print(" ");
-    if (winddir < 100) Serial.print(" ");
-    Serial.print(winddir);
-    //Serial.print(",windgustdir=");
-    //Serial.print(windgustdir);
-    //Serial.print(F(",wAvg="));
-    //Serial.print(windspdmph_avg2m, 2);
+  // 5: wind direction, 1 minute average
+  Serial.print(charComma);
+  if (winddir == 0 ) Serial.print(" ");
+  if (winddir < 100) Serial.print(" ");
+  Serial.print(winddir);
+  //Serial.print(",windgustdir=");
+  //Serial.print(windgustdir);
+  //Serial.print(F(",wAvg="));
+  //Serial.print(windspdmph_avg2m, 2);
 
-    // 6: temperature, F, outside, instant
-    Serial.print(charComma);
-    Serial.print(tempf, 1);
+  // 6: temperature, F, outside, instant
+  Serial.print(charComma);
+  Serial.print(tempf, 1);
 
-    // 7: humidity, %, outside, instant
-    Serial.print(charComma);
-    Serial.print(humidity, 1);
+  // 7: humidity, %, outside, instant
+  Serial.print(charComma);
+  Serial.print(humidity, 1);
 
-    // 8: Barometric pressure, hPa, outside, instant
-    Serial.print(charComma);
-    Serial.print(pressure / 100.0, 1);
+  // 8: Barometric pressure, hPa, outside, instant
+  Serial.print(charComma);
+  Serial.print(pressure / 100.0, 1);
 
-    // 9: Barometric pressure delta from previous reading
-    Serial.print(charComma);
-    if (pressure >= oldPressure) Serial.print(" ");
-    Serial.print((pressure - oldPressure) / 100.0, 2);
+  // 9: Barometric pressure delta from previous reading
+  Serial.print(charComma);
+  if (pressure >= oldPressure) Serial.print(" ");
+  Serial.print((pressure - oldPressure) / 100.0, 2);
 
-    // 10: rain so far today
-    //Serial.print(",rainin=");
-    //Serial.print(rainin, 2);
-    Serial.print(charComma);
-    Serial.print(0.0, 2);
+  // 10: rain so far today
+  //Serial.print(",rainin=");
+  //Serial.print(rainin, 2);
+  Serial.print(charComma);
+  Serial.print(0.0, 2);
 
-    // 11: rain long term? Maybe it's supposed to be last 24h, but it's always zero.
-    //Serial.print(",dailyrainin=");
-    //Serial.print(dailyrainin, 2);
-    //Serial.print(",");
-    //Serial.print(0.0, 2);
+  // 11: rain long term? Maybe it's supposed to be last 24h, but it's always zero.
+  //Serial.print(",dailyrainin=");
+  //Serial.print(dailyrainin, 2);
+  //Serial.print(",");
+  //Serial.print(0.0, 2);
 
-    // 11: wind speed, mph, instant (instead of 24h rain)
-    Serial.print((","));
-    if (windspeedmph < 10) Serial.print('0');
-    Serial.print(windspeedmph, 1);
+  // 11: wind speed, mph, instant (instead of 24h rain)
+  Serial.print((","));
+  if (windspeedmph < 10) Serial.print('0');
+  Serial.print(windspeedmph, 1);
 
-    // 12: temperature in the enclosure or 2nd sensor if we get one
-    Serial.print(charComma);
-    //Serial.print(tempf, 1); //(FIXME: same as ext sensor since we only have one)
-    Serial.print(RTC.temperature() / 4);
+  // 12: temperature in the enclosure or 2nd sensor if we get one
+  Serial.print(charComma);
+  //Serial.print(tempf, 1); //(FIXME: same as ext sensor since we only have one)
+  Serial.print(RTC.temperature() / 4);
 
-    // 13: current in mA
-    //(FIXME: same as ext sensor since we only have one)
-    Serial.print(charComma);
-    Serial.print(ina219a_current, 2);
-    Serial.print("mA");
+  // 13: current in mA
+  //(FIXME: same as ext sensor since we only have one)
+  Serial.print(charComma);
+  Serial.print(ina219a_current, 2);
+  Serial.print("mA");
 
-    // 14: voltage onboard, ~5v source
-    Serial.print(charComma);
-    Serial.print(batt_lvl, 2);
+  // 14: voltage onboard, ~5v source
+  Serial.print(charComma);
+  Serial.print(batt_lvl, 2);
 
-    // 15: voltage battery, possibly inferred but same as 14 for now.
-    Serial.print(charComma);
-    Serial.print(ina219a_volts,2);
-    //Serial.print(sla_30sec, 2);
+  // 15: voltage battery, possibly inferred but same as 14 for now.
+  Serial.print(charComma);
+  Serial.print(ina219a_volts,2);
+  //Serial.print(sla_30sec, 2);
 
-    // 16: light level, referenced to voltage I think
-    Serial.print(charComma);
-    Serial.print(light_lvl, 2);
+  // 16: light level, referenced to voltage I think
+  Serial.print(charComma);
+  Serial.print(light_lvl, 2);
 
-    // 17: run time in days.HH:MM:SS
-    Serial.print(charComma);
-    Serial.print(days);
-    Serial.print(".");
-    printDigits(hours);
-    Serial.print(":");
-    printDigits(minutes);
-    Serial.print(":");
-    printDigits(seconds);
+  // 17: run time in days.HH:MM:SS
+  Serial.print(charComma);
+  Serial.print(days);
+  Serial.print(".");
+  printDigits(hours);
+  Serial.print(":");
+  printDigits(minutes);
+  Serial.print(":");
+  printDigits(seconds);
 
-    // 18: Print the RTC date & time. For debugging.
-    time_t rtcTime = RTC.get();
-    Serial.print(charComma);
-    Serial.print("rtc:");
-    Serial.print(year(rtcTime));
-    Serial.print("/");
-    Serial.print(month(rtcTime));
-    Serial.print("/");
-    Serial.print(day(rtcTime));
-    Serial.print(charComma);
-    Serial.print(hour(rtcTime));
-    Serial.print(":");
-    Serial.print(minute(rtcTime));
-    Serial.print(":");
-    Serial.print(second(rtcTime));
+  // 18: Print the RTC date & time. For debugging.
+  time_t rtcTime = RTC.get();
+  Serial.print(charComma);
+  Serial.print("rtc:");
+  Serial.print(year(rtcTime));
+  Serial.print("/");
+  Serial.print(month(rtcTime));
+  Serial.print("/");
+  Serial.print(day(rtcTime));
+  Serial.print(charComma);
+  Serial.print(hour(rtcTime));
+  Serial.print(":");
+  Serial.print(minute(rtcTime));
+  Serial.print(":");
+  Serial.print(second(rtcTime));
 
 
 /*
-    // loop counter. For diagnostics, mostly useless.
-    Serial.print(charComma);
-    Serial.print(loopCounter);
-    Serial.print(charComma);
-    Serial.print(loopCounter - loopDelta);
-    loopDelta = loopCounter;
+  // loop counter. For diagnostics, mostly useless.
+  Serial.print(charComma);
+  Serial.print(loopCounter);
+  Serial.print(charComma);
+  Serial.print(loopCounter - loopDelta);
+  loopDelta = loopCounter;
 
-    // Print the raw 12v input on A12/SLA_BATT_LVL
-    Serial.print(charComma);
-    Serial.print(sla_raw);
-    Serial.print(charComma);
-    Serial.print(sla_lvl, 2);
-    Serial.print(charComma);
-    Serial.print(sla_30sec, 2);
+  // Print the raw 12v input on A12/SLA_BATT_LVL
+  Serial.print(charComma);
+  Serial.print(sla_raw);
+  Serial.print(charComma);
+  Serial.print(sla_lvl, 2);
+  Serial.print(charComma);
+  Serial.print(sla_30sec, 2);
 
-    //Serial.print(charComma);
-    //Serial.print(F("__DATE__ "));    //C++ #DEFINE that expands to the current compile date
-    //Serial.print(F("__TIME__"));     //C++ #DEFINE that expands to the current compile time
-    //Serial.print(String(compile_date));
+  //Serial.print(charComma);
+  //Serial.print(F("__DATE__ "));    //C++ #DEFINE that expands to the current compile date
+  //Serial.print(F("__TIME__"));     //C++ #DEFINE that expands to the current compile time
+  //Serial.print(String(compile_date));
 */
 
-    // 19: print free memory? Interesting...
-    Serial.print(charComma);
-    Serial.print(freeRam());
+  // 19: print free memory? Interesting...
+  Serial.print(charComma);
+  Serial.print(freeRam());
 
-    // 20: print raw ADC reading from wind direction, to troubleshooting why 270 degrees sometimes reads invalid
-    Serial.print(charComma);
-    Serial.print(winddirRaw);
+  // 20: print raw ADC reading from wind direction, to troubleshooting why 270 degrees sometimes reads invalid
+  Serial.print(charComma);
+  Serial.print(winddirRaw);
 
-    // 21: print ina219a's voltage, current
-    Serial.print(charComma);
-    Serial.print(ina219a_volts);
-    Serial.print(charComma);
-    Serial.print(ina219a_current);
+  // 21: print ina219a's voltage, current
+  Serial.print(charComma);
+  Serial.print(ina219a_volts);
+  Serial.print(charComma);
+  Serial.print(ina219a_current);
 
-    // NEWLINE:
-    Serial.println();
+  // NEWLINE:
+  Serial.println();
 
 }
 
