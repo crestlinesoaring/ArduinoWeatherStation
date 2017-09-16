@@ -8,13 +8,16 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "L12jB3"; // jjj
-const String wxOwner = "-M-";
+const String wxVersion = "L13bB1"; // jjj
+const String wxOwner = "-DJ-";
+const byte IPgw = 254;    //Marshall must be 254
+const byte IPq3 = 243;    //Marshall must be 243
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
 const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
-const bool disableNTP = true;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
-const String startupMessage = "UM Weather Station (ver L12jB3 2017/09/07) starting at ms "; // jjj
+const byte bme280b_HWaddr = 0x77;
+const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
+const String startupMessage = "UM Weather Station (ver L13bB1 2017/09/15) starting at ms ";
 
 
 #include <avr/wdt.h>   // WatchDog Timer. If I hit an endless loop, reset. Kindof. May not reset Ethernet properly.
@@ -44,8 +47,9 @@ const String startupMessage = "UM Weather Station (ver L12jB3 2017/09/07) starti
 Adafruit_INA219 ina219a(ina219a_HWaddr);     // First  ina219 sensor: A
 Adafruit_INA219 ina219b(ina219b_HWaddr);     // Second ina219 sensor: B
 BME280 bme280a;                              // First  bme280 sensor: A
-MPL3115A2 myPressure; //Create an instance of the pressure sensor
-HTU21D myHumidity; //Create an instance of the humidity sensor
+BME280 bme280b;                              // Second bme280 sensor: B
+MPL3115A2 myPressure;            //Sparkfun pressure sensor
+HTU21D myHumidity;               //Sparkfun humidity sensor
 
 //Hardware pin definitions, weather station
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -62,6 +66,10 @@ const byte ETH_ENABLED = LOW;
 const byte PIN_UBIQUITI_DISABLE = 28; // Ubiquiti power control; off=LOW, on=HIGH
 const byte UBIQUITI_DISABLED = LOW;
 const byte UBIQUITI_ENABLED = HIGH;
+
+const byte PIN_SOLAR_DISABLE = 16;    // Solar panel control; on=LOW, off=HIGH
+const byte SOLAR_DISABLED = HIGH;
+const byte SOLAR_ENABLED = LOW;
 
 // analog I/O pins
 const byte WDIR = A0;
@@ -111,6 +119,9 @@ byte sunriseDay = 0;        //Day we last calculated sunrise/sunset for. If it's
 bool justBooted = true;     //Some stuff settles after the first minute, so let's keep track of that.
 bool justRestarted = true;  //Print an R at the end of the first upload attempt to make it easy to see a reboot.
 bool powerSave = false;     //Set a flag when we're in power save mode. Do some stuff different.
+bool pauseSolar = false;    //We need to charge pausing when it gets hot or if charging too fast. It == battery, box, outside, etc...
+byte pauseSolarMinutes = 5; //How long to leave solar off when we turn it off.
+time_t pauseSolarStartTime; //Keep track of when we paused the solar panel so we can leave it off for a set time.
 time_t reportWatchdog = 0;  //Do we need to report a watchdog reset?
 time_t recentTime = 0;      //Set the current time periodically so we can use it in the Watchdog Interrupt
 time_t lastCrashTime = 0;
@@ -402,23 +413,47 @@ void setup()
     
     // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
     Serial.print("Reading EEPROM to see power save state: ");
-   
-    pinMode(30, OUTPUT);     //             common GND source for "YYD-3" FET switches. 
-    digitalWrite(30, LOW);   //             must always be low
-     
     if (EEPROM.read(eePowerSave)) {
-      Serial.print("Shutting off Eth and Ubiquity... ");
+      Serial.print("Shutting off Eth and Ubiquiti... ");
       powerSave = true;
-      disableEthernet();
+
+      digitalWrite(30, LOW);                     //             must always be low
+      pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
+
+      digitalWrite(PIN_UBIQUITI_DISABLE, LOW);   //             turns Ubiquiti off (on=HIGH / off=low, default=on)
+      pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);     //             prepares Ubiquiti power control pin
+
+                                                 //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
+                                                 //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
+      pinMode(MOSI, INPUT);                      //             prevents leakage through ESD diodes
+      pinMode(MISO, INPUT);                      //             prevents leakage through ESD diodes
+      pinMode(SCK, INPUT);                       //             prevents leakage through ESD diodes
+      pinMode(SS, INPUT);                        //             prevents leakage through ESD diodes
+                                                 //             next, power to Ethernet shield is turned off 
+      digitalWrite(PIN_ETH_DISABLE, HIGH);       //             ETH shield off (on=low / off=HIGH, default=on)
+      pinMode(PIN_ETH_DISABLE, OUTPUT);          //             sets ETH power control pin to output
+
 
     } else {
-      Serial.print("Turning on Eth and Ubiquity... ");
+      Serial.print("Turning on Eth and Ubiquiti... ");
       powerSave = false;
-      enableEthernet();
+                                                 //             The Ubiquiti will be powered on. It takes ?? seconds to establish a link
+      digitalWrite(PIN_UBIQUITI_DISABLE, HIGH);  //             Ubiquiti on (on=HIGH / off=low, default=on)
+      pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);     //             sets Ubiquiti power control pin to output
+    
+      digitalWrite(30, LOW);                     //             must always be low
+      pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
 
+                                                 //             The Ethernet shield will be powered on (takes 3 seconds to go life). 
+                                                 //             No need to reprogram the SPI pins, Ethernet.begin will do that (what about SS??)
+      digitalWrite(PIN_ETH_DISABLE, LOW);        //             ETH shield on (on=low / off=HIGH, default=on)
+      pinMode(PIN_ETH_DISABLE, OUTPUT);          //             sets ETH power control pin to output
+
+      //Can't do this, it will set off the Watchdog. We can discuss disabling the watchdog, but I consider this a poor way to accomplish this task.
+      //delay(30000);                            //             give eth and U 30 seconds time to boot up (better would be to  ping!)
+ 
     }
     Serial.println("Done.");
-
 
 
     //Weather Station stuff
@@ -445,7 +480,7 @@ void setup()
     ina219b.begin();
     Serial.print(micros() - usTemp); Serial.println("us.");
 
-    //Setup BME280 temperatue and humidity sensor(s)
+    //Setup BME280 temperatue and humidity sensor A
     Serial.print(F("Starting BME280a Temperature & Humidity sensor A, status: 0x")); usTemp = micros();
     bme280a.settings.commInterface = I2C_MODE;
     bme280a.settings.I2CAddress = bme280a_HWaddr;
@@ -455,6 +490,18 @@ void setup()
     bme280a.settings.humidOverSample = 1; //oversample rate: 1-5 equate to 1, 2, 4, 8, 16
     Serial.print(bme280a.begin(), HEX);
     Serial.print(", took "); Serial.print(micros() - usTemp); Serial.println("us.");
+
+    //Setup BME280 temperatue and humidity sensor B
+    Serial.print(F("Starting BME280b Temperature & Humidity sensor B, status: 0x")); usTemp = micros();
+    bme280b.settings.commInterface = I2C_MODE;
+    bme280b.settings.I2CAddress = bme280b_HWaddr;
+    bme280b.settings.runMode = 3;
+    bme280b.settings.tempOverSample = 1;  //oversample rate: 1-5 equate to 1, 2, 4, 8, 16
+    bme280b.settings.pressOverSample = 1; //oversample rate: 1-5 equate to 1, 2, 4, 8, 16
+    bme280b.settings.humidOverSample = 1; //oversample rate: 1-5 equate to 1, 2, 4, 8, 16
+    Serial.print(bme280b.begin(), HEX);
+    Serial.print(", took "); Serial.print(micros() - usTemp); Serial.println("us.");
+
 
     //Configure the Sparkfun pressure sensor
     Serial.print(F("Starting Sparkfun pressure, took ")); msTemp = millis();
@@ -833,10 +880,10 @@ void loop()
       if (day() > sunriseDay) getRiseSet();
 
     
-      /* * * * * * * * * * * * * * * * * *
-     *  P O W E R   S A V E
-     *  P O W E R   S A V E
-     * * * * * * * * * * * * * * * * * */
+     /* * * * * * * * * * * * * * * * * *
+      *  P O W E R   S A V E
+      *  P O W E R   S A V E
+      * * * * * * * * * * * * * * * * * */
       // Turn off / on some peripherals at night & morning
       int minutesToday = hour() * 60 + minute();
       Serial.print("Minute of day is: ");
@@ -877,6 +924,34 @@ void loop()
 
       } // End of night/day figuring out (for power save)
 
+     /* * * * * * * * * * * * * * * * * * * * * * * * *
+      *  S O L A R   P A N E L S
+      *  S O L A R   P A N E L S
+      *  B A T T E R Y   P R O T E C T I O N
+      *  B A T T E R Y   P R O T E C T I O N
+      * * * * * * * * * * * * * * * * * * * * * * * * */
+
+      if (ina219b_current > 350) {
+
+        // Charging too fast. Poor man's slowdown: turn off the solar panel for a bit. 8-o
+        Serial.println(F("Pausing Solar Panels because charge rate was > 350ma (==700ma because INA reports half real value)"));
+        pauseSolar = true;
+        pauseSolarStartTime = now();
+        disableSolar();
+
+      } else {
+
+        // If we're currently on a pause, let's see if we should enable charging again.
+        if (pauseSolar) {
+          if ( (pauseSolarStartTime + pauseSolarMinutes * 60) > now() ) {
+            //It's been enough minutes with the Panels off. Turn them back on.
+            Serial.println(F("RESUMING Solar Panels: it's been long enough with them turned off"));
+            pauseSolar = false;
+            enableSolar();
+          }
+        }
+      } // END of charging-too-fast check
+
  
     } // END of ONCE A MINUTE tasks
 
@@ -885,7 +960,7 @@ void loop()
     calcWeather();  // Should be called once a second to build averages and stuff.
     if (justBooted) {
       //Once the time is reporting that it's synced and it's been at least 15 secs since boot, start reporting weather.
-      if ((seconds > 15) and (timeStatus() == timeSet)) justBooted = false;
+      if ((seconds > 30) and (timeStatus() == timeSet)) justBooted = false;
     } else {
       if (second() == 0) {
     //if (true) {  // for STRESS TEST we go once a second.
@@ -1002,6 +1077,23 @@ From: http://forum.arduino.cc/index.php?topic=66426.15
     //In november we must be before the first sunday to be dst.
     //That means the previous sunday must be before the 1st.
     return previousSunday <= 0;
+}
+
+// Turns on solar panels, allows battery charging and solar powering of peripherals.
+// NOTE if this is disabled, everything runs on battery power, even in daytime.
+void enableSolar() {
+  Serial.println("Solar panel ENABLED via enableSolar();");
+  pinMode(PIN_SOLAR_DISABLE, OUTPUT);                 // prepares Solar Panel control pin
+  digitalWrite(PIN_SOLAR_DISABLE, SOLAR_ENABLED);     // turns Solar Panel on
+
+}
+
+// Turns off solar panels. Use this carefully, it makes everything battery powered.
+void disableSolar() {
+  Serial.println("Solar panel DISABLED via disableSolar();");
+  pinMode(PIN_SOLAR_DISABLE, OUTPUT);                  // prepares Solar Panel control pin
+  digitalWrite(PIN_SOLAR_DISABLE, SOLAR_DISABLED);     // turns Solar Panel off
+
 }
 
 //Calculates each of the variables that wunderground is expecting
@@ -1609,45 +1701,53 @@ String getWeatherString() {
     weatherString += "0";
   }
 
+  // 12b: temperature, F, inside BB from BME280b, instant
+  weatherString += String(charComma);
+  weatherString += String(bme280b.readTempF(), 2);
+
+  // 12c: humidity, %, inside BB bme280b, instant (for checking dewpoint eventually)
+  weatherString += String(charComma);
+  weatherString += String(bme280b.readFloatHumidity(), 0);
+
   // 13: Current on ina219 sensor A (raw battery @ 12v maybe?)
   weatherString += String(charComma);
   weatherString += String(ina219a_current, 2);
-  weatherString += String("mA");
+  //weatherString += String("mA");
 
   // 14: Voltage on ina219 sensor A (raw battery @ 12v maybe?)
   weatherString += String(charComma);
   weatherString += String(ina219a_volts, 2);
-  weatherString += String("v");
+  //weatherString += String("v");
   //weatherString += String(batt_lvl, 2);
 
   // 15: Power on ina219 sensor A (watts battery)
-  weatherString += String(charComma);
-  weatherString += String(ina219a_volts * ina219a_current / 1000, 2);
-  weatherString += String("w");
+//  weatherString += String(charComma);
+//  weatherString += String(ina219a_volts * ina219a_current / 1000, 2);
+//  weatherString += String("w");
 
 
   // 16: Current on ina219 sensor B (after buck to 5v maybe?)
   weatherString += String(charComma);
   weatherString += String(ina219b_current, 2);
-  weatherString += String("mA");
+  //weatherString += String("mA");
 
   // 17: Voltage on ina219 sensor A (after buck to 5v maybe?)
   weatherString += String(charComma);
   weatherString += String(ina219b_volts, 2);
-  weatherString += String("v");
+  //weatherString += String("v");
   //weatherString += String(batt_lvl, 2);
 
   // 18: Power on ina219 sensor A (watts battery)
-  weatherString += String(charComma);
-  weatherString += String(ina219b_volts * ina219b_current / 1000, 2);
-  weatherString += String("w");
+//  weatherString += String(charComma);
+//  weatherString += String(ina219b_volts * ina219b_current / 1000, 2);
+//  weatherString += String("w");
 
 
 
   // 19: light level, referenced to voltage I think
-  weatherString += String(charComma);
+//  weatherString += String(charComma);
 //    weatherString += String(light_lvl, 2);
-  weatherString += "0";
+//  weatherString += "0";
 
   // 20: run time in days.HH:MM:SS
   weatherString += String(charComma);
