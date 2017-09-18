@@ -10,8 +10,6 @@
  */
 const String wxVersion = "L13bB1"; // jjj
 const String wxOwner = "-DJ-";
-const byte IPgw = 254;    //Marshall must be 254
-const byte IPq3 = 243;    //Marshall must be 243
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
 const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
@@ -301,14 +299,35 @@ void enableEthernet() {
   pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                 // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_ENABLED);  // turns Ubiquiti on
 
+  // Ubiquiti takes 30 seconds to turn on and Ethernet takes 5; try to make them ready at the same time
+  // This a poor way to accomplish this task; better would be to ping
+  for (int i=0; i<30; i++) {
+    wdt_reset();
+    delay(1000);
+  }
+
   pinMode(PIN_ETH_DISABLE, OUTPUT);                     // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_ENABLED);           // turns ETH shield on
+  
+  // ETH takes 5 seconds to be ready to send when turned on
+  // This a poor way to accomplish this task; better would be to ping
+  for (int i=0; i<5; i++) {
+    wdt_reset();
+    delay(1000);
+  }
 }
 
 // Turns off power for network components to save power
 void disableEthernet() {
   pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                  // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_DISABLED);  // turns Ubiquiti off
+
+                                             //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
+                                             //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
+  pinMode(MOSI, INPUT);                      //             prevents leakage through ESD diodes
+  pinMode(MISO, INPUT);                      //             prevents leakage through ESD diodes
+  pinMode(SCK, INPUT);                       //             prevents leakage through ESD diodes
+  pinMode(SS, INPUT);                        //             prevents leakage through ESD diodes
 
   pinMode(PIN_ETH_DISABLE, OUTPUT);                      // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_DISABLED);           // turns ETH shield off
@@ -410,6 +429,10 @@ void setup()
       Serial.println("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0).");
       EEPROM.update(eePowerSave, false);
     }
+
+    // Set the common GND source for "YYD-3" FET switches to LOW OUTPUT because it will need to be this way regardless of which bootup mode we're in
+    digitalWrite(30, LOW);                     //             must always be low
+    pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
     
     // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
     Serial.print("Reading EEPROM to see power save state: ");
@@ -417,37 +440,13 @@ void setup()
       Serial.print("Shutting off Eth and Ubiquiti... ");
       powerSave = true;
 
-      digitalWrite(30, LOW);                     //             must always be low
-      pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
-
-      digitalWrite(PIN_UBIQUITI_DISABLE, LOW);   //             turns Ubiquiti off (on=HIGH / off=low, default=on)
-      pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);     //             prepares Ubiquiti power control pin
-
-                                                 //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
-                                                 //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
-      pinMode(MOSI, INPUT);                      //             prevents leakage through ESD diodes
-      pinMode(MISO, INPUT);                      //             prevents leakage through ESD diodes
-      pinMode(SCK, INPUT);                       //             prevents leakage through ESD diodes
-      pinMode(SS, INPUT);                        //             prevents leakage through ESD diodes
-                                                 //             next, power to Ethernet shield is turned off 
-      digitalWrite(PIN_ETH_DISABLE, HIGH);       //             ETH shield off (on=low / off=HIGH, default=on)
-      pinMode(PIN_ETH_DISABLE, OUTPUT);          //             sets ETH power control pin to output
-
+      disableEthernet();
 
     } else {
       Serial.print("Turning on Eth and Ubiquiti... ");
       powerSave = false;
-                                                 //             The Ubiquiti will be powered on. It takes ?? seconds to establish a link
-      digitalWrite(PIN_UBIQUITI_DISABLE, HIGH);  //             Ubiquiti on (on=HIGH / off=low, default=on)
-      pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);     //             sets Ubiquiti power control pin to output
-    
-      digitalWrite(30, LOW);                     //             must always be low
-      pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
 
-                                                 //             The Ethernet shield will be powered on (takes 3 seconds to go life). 
-                                                 //             No need to reprogram the SPI pins, Ethernet.begin will do that (what about SS??)
-      digitalWrite(PIN_ETH_DISABLE, LOW);        //             ETH shield on (on=low / off=HIGH, default=on)
-      pinMode(PIN_ETH_DISABLE, OUTPUT);          //             sets ETH power control pin to output
+      enableEthernet();
 
       //Can't do this, it will set off the Watchdog. We can discuss disabling the watchdog, but I consider this a poor way to accomplish this task.
       //delay(30000);                            //             give eth and U 30 seconds time to boot up (better would be to  ping!)
