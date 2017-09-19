@@ -15,7 +15,8 @@ const byte ina219b_HWaddr = 0x41;  //
 const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
-const String startupMessage = "UM Weather Station (ver L13bB1 2017/09/15) starting at ms ";
+const String startupMessage = "UM Weather Station (ver L13fB1 2017/09/18) starting at ms ";
+#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
 #include <avr/wdt.h>   // WatchDog Timer. If I hit an endless loop, reset. Kindof. May not reset Ethernet properly.
@@ -885,12 +886,19 @@ void loop()
       * * * * * * * * * * * * * * * * * */
       // Turn off / on some peripherals at night & morning
       int minutesToday = hour() * 60 + minute();
+
+#ifdef FOURMINUTEDAY
+      if ( (minute() / 4) % 2 ) {
+        Serial.println("   !!DEBUG: Cycling to NIGHT every FOUR minutes because of ""#define FOURMINUTEDAY""");
+
+#else
       Serial.print("Minute of day is: ");
       Serial.print(minutesToday);
-      if ( (minutesToday < sunrise) or (minutesToday > sunset - 60) ) {     // jjj removed 60 to save even more   if ( (minutesToday < sunrise - 60) or (minutesToday > sunset - 60) ) {
+      if ( (minutesToday < sunrise) or (minutesToday > sunset - 60) ) {
 
         Serial.print(", which is Night time. We will switch to day at minute #");
         Serial.println(sunrise);     // jjj removed 60 to save even more     Serial.println(sunrise - 60); 
+#endif
         // We're not between "half an hour before sunrise" and sunset, so turn stuff off.
         // First set variables and record in eeprom that we're in power save mode.
         if (!powerSave) {
