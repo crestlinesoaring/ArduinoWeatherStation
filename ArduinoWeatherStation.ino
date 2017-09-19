@@ -316,6 +316,9 @@ void enableEthernet() {
     wdt_reset();
     delay(1000);
   }
+  
+  Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // jjj Eth must be initialized after each power up
+
 }
 
 // Turns off power for network components to save power
@@ -888,7 +891,7 @@ void loop()
       int minutesToday = hour() * 60 + minute();
 
 #ifdef FOURMINUTEDAY
-      if ( (minute() / 4) % 2 ) {
+      if ( (minute() / 6) % 2 ) {
         Serial.println("   !!DEBUG: Cycling to NIGHT every FOUR minutes because of ""#define FOURMINUTEDAY""");
 
 #else
@@ -919,11 +922,13 @@ void loop()
           //if powerSave was set, that means we're transitioning to daytime now.
           // Until I figure out how to restart the Ethernet, just force a watchdog timeout with delays.
           enableEthernet();
-  
+
+          /* No longer needed?
           Serial.println(F("   ! ! !   We just switched to DAY. Since we can't reset ETHERNET very well, we are rebooting soon!!! ! ! "));
           delay(10000);
           delay(20000);
           delay(30000);
+          */
         }
        
         //This below kind of doesn't count, because of the reboot above. We really should never get here.
