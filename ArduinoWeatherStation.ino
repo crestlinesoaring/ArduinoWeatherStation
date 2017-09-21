@@ -1325,39 +1325,49 @@ float get_wind_speed()
     return(windSpeed);
 }
 
-//Read the wind direction sensor, return heading in degrees
+//Read the wind direction sensor, return heading in degrees, mutate winddirRaw to contain the raw ADC value read
 int get_wind_direction()
 {
-    unsigned int adc;
+  unsigned int adc;
 
-    adc = analogRead(WDIR); // get the current reading from the sensor
-    winddirRaw = adc;       // Save the ADC value for troubleshooting.
+  adc = analogRead(WDIR); // get the current reading from the sensor
+  winddirRaw = adc;       // Save the ADC value for troubleshooting.
 
-    // The following table is ADC readings for the wind direction sensor output, sorted from low to high.
-    // Each threshold is the midpoint between adjacent headings. The output is degrees for that ADC reading.
-    // Note that these are not in compass degree order! See Weather Meters datasheet for more information.
+  float temp = RTC.temperature() / 4.0; // Get RTC temperature in degrees C
 
-    if (adc < 380) { strWindDir = "ESE"; return (113); }    // ESE
-    if (adc < 393) { strWindDir = "ENE"; return  (68); }    // ENE
-    if (adc < 414) { strWindDir = "E";   return  (90); }    // E
-    if (adc < 456) { strWindDir = "SSE"; return (158); }    // SSE
-    if (adc < 508) { strWindDir = "SE";  return (135); }    //  SE
-    if (adc < 551) { strWindDir = "SSW"; return (203); }    // SSW
-    if (adc < 615) { strWindDir = "S";   return (180); }    // S
-    if (adc < 680) { strWindDir = "NNE"; return  (23); }    // NNE
-    if (adc < 746) { strWindDir = "NE";  return  (45); }    //  NE
-    if (adc < 801) { strWindDir = "WSW"; return (248); }    // WSW
-    if (adc < 833) { strWindDir = "SW";  return (225); }    //  SW
-    if (adc < 878) { strWindDir = "NNW"; return (338); }    // NNW
-    if (adc < 913) { strWindDir = "N";   return   (0); }    // N
-    if (adc < 940) { strWindDir = "WNW"; return (293); }    // WNW
-    if (adc < 967) { strWindDir = "NW";  return (315); }    //  NW
-    if (adc < 990) { strWindDir = "W";   return (270); }    // W
-    if (adc < 1010) {strWindDir = "W";   return (270); }    // W - Sometimes 270 returns higher than 990.
-    strWindDir = "ERR";
-    return (-10); // error, disconnected?
+  // These constants were computed based on Marshall data from 8/28 to 9/19 using a custom best-fit program
+  float p0 = -6.60705608404363;
+  float p1 = 4.80599452080313;
+  float p2 = 862.081604616306;
+  float p3 = -0.130310898086486;
+
+  // Adjust raw ADC to somewhat correct for temperature
+  float t = temp - 30;
+  float wmin = p0 + p1 * t + p3 * t * t;
+  adc = (int)(wmin + (p2 - wmin) * adc / p2);
+
+  // These cutoffs were selected with the same best-fit program that generated the constants
+  // The direction order is based on the resistances produced by the wind vane, and therefore
+  // the voltages that show up on the ADC from the voltage divider
+  if (adc < 400) { strWindDir = "ERL"; return (-10); }    // Error; ADC value too low
+  if (adc < 454) { strWindDir = "ESE"; return (113); }    // ESE
+  if (adc < 475) { strWindDir = "ENE"; return  (68); }    // ENE
+  if (adc < 509) { strWindDir = "E";   return  (90); }    // E
+  if (adc < 553) { strWindDir = "SSE"; return (158); }    // SSE
+  if (adc < 589) { strWindDir = "SE";  return (135); }    //  SE
+  if (adc < 615) { strWindDir = "SSW"; return (203); }    // SSW
+  if (adc < 659) { strWindDir = "S";   return (180); }    // S
+  if (adc < 709) { strWindDir = "NNE"; return  (23); }    // NNE
+  if (adc < 769) { strWindDir = "NE";  return  (45); }    //  NE
+  if (adc < 819) { strWindDir = "WSW"; return (248); }    // WSW
+  if (adc < 848) { strWindDir = "SW";  return (225); }    //  SW
+  if (adc < 891) { strWindDir = "NNW"; return (338); }    // NNW
+  if (adc < 924) { strWindDir = "N";   return   (0); }    // N
+  if (adc < 951) { strWindDir = "WNW"; return (293); }    // WNW
+  if (adc < 980) { strWindDir = "NW";  return (315); }    //  NW
+  if (adc < 1015){ strWindDir = "W";   return (270); }    // W
+  else           { strWindDir = "ERH"; return (-20); }    // Error; ADC value too high
 }
-
 
 /*-------- NTP code ----------*/
 /*****************************************************************************

@@ -1,2 +1,5 @@
 ignore
 Marshall.h
+
+__vm/
+.vs/
