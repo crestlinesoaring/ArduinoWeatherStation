@@ -10,14 +10,13 @@
  */
 const String wxVersion = "L13bB1"; // jjj
 const String wxOwner = "-DJ-";
-const byte IPgw = 254;    //Marshall must be 254
-const byte IPq3 = 243;    //Marshall must be 243
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
 const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
-const String startupMessage = "UM Weather Station (ver L13bB1 2017/09/15) starting at ms ";
+const String startupMessage = "UM Weather Station (ver L13fB1 2017/09/18) starting at ms ";
+#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
 #include <avr/wdt.h>   // WatchDog Timer. If I hit an endless loop, reset. Kindof. May not reset Ethernet properly.
@@ -301,14 +300,38 @@ void enableEthernet() {
   pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                 // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_ENABLED);  // turns Ubiquiti on
 
+  // Ubiquiti takes 30 seconds to turn on and Ethernet takes 5; try to make them ready at the same time
+  // This a poor way to accomplish this task; better would be to ping
+  for (int i=0; i<30; i++) {
+    wdt_reset();
+    delay(1000);
+  }
+
   pinMode(PIN_ETH_DISABLE, OUTPUT);                     // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_ENABLED);           // turns ETH shield on
+  
+  // ETH takes 5 seconds to be ready to send when turned on
+  // This a poor way to accomplish this task; better would be to ping
+  for (int i=0; i<5; i++) {
+    wdt_reset();
+    delay(1000);
+  }
+  
+  Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // jjj Eth must be initialized after each power up
+
 }
 
 // Turns off power for network components to save power
 void disableEthernet() {
   pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                  // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_DISABLED);  // turns Ubiquiti off
+
+                                             //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
+                                             //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
+  pinMode(MOSI, INPUT);                      //             prevents leakage through ESD diodes
+  pinMode(MISO, INPUT);                      //             prevents leakage through ESD diodes
+  pinMode(SCK, INPUT);                       //             prevents leakage through ESD diodes
+  pinMode(SS, INPUT);                        //             prevents leakage through ESD diodes
 
   pinMode(PIN_ETH_DISABLE, OUTPUT);                      // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_DISABLED);           // turns ETH shield off
@@ -410,6 +433,10 @@ void setup()
       Serial.println("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0).");
       EEPROM.update(eePowerSave, false);
     }
+
+    // Set the common GND source for "YYD-3" FET switches to LOW OUTPUT because it will need to be this way regardless of which bootup mode we're in
+    digitalWrite(30, LOW);                     //             must always be low
+    pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
     
     // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
     Serial.print("Reading EEPROM to see power save state: ");
@@ -417,37 +444,13 @@ void setup()
       Serial.print("Shutting off Eth and Ubiquiti... ");
       powerSave = true;
 
-      digitalWrite(30, LOW);                     //             must always be low
-      pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
-
-      digitalWrite(PIN_UBIQUITI_DISABLE, LOW);   //             turns Ubiquiti off (on=HIGH / off=low, default=on)
-      pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);     //             prepares Ubiquiti power control pin
-
-                                                 //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
-                                                 //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
-      pinMode(MOSI, INPUT);                      //             prevents leakage through ESD diodes
-      pinMode(MISO, INPUT);                      //             prevents leakage through ESD diodes
-      pinMode(SCK, INPUT);                       //             prevents leakage through ESD diodes
-      pinMode(SS, INPUT);                        //             prevents leakage through ESD diodes
-                                                 //             next, power to Ethernet shield is turned off 
-      digitalWrite(PIN_ETH_DISABLE, HIGH);       //             ETH shield off (on=low / off=HIGH, default=on)
-      pinMode(PIN_ETH_DISABLE, OUTPUT);          //             sets ETH power control pin to output
-
+      disableEthernet();
 
     } else {
       Serial.print("Turning on Eth and Ubiquiti... ");
       powerSave = false;
-                                                 //             The Ubiquiti will be powered on. It takes ?? seconds to establish a link
-      digitalWrite(PIN_UBIQUITI_DISABLE, HIGH);  //             Ubiquiti on (on=HIGH / off=low, default=on)
-      pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);     //             sets Ubiquiti power control pin to output
-    
-      digitalWrite(30, LOW);                     //             must always be low
-      pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
 
-                                                 //             The Ethernet shield will be powered on (takes 3 seconds to go life). 
-                                                 //             No need to reprogram the SPI pins, Ethernet.begin will do that (what about SS??)
-      digitalWrite(PIN_ETH_DISABLE, LOW);        //             ETH shield on (on=low / off=HIGH, default=on)
-      pinMode(PIN_ETH_DISABLE, OUTPUT);          //             sets ETH power control pin to output
+      enableEthernet();
 
       //Can't do this, it will set off the Watchdog. We can discuss disabling the watchdog, but I consider this a poor way to accomplish this task.
       //delay(30000);                            //             give eth and U 30 seconds time to boot up (better would be to  ping!)
@@ -886,12 +889,19 @@ void loop()
       * * * * * * * * * * * * * * * * * */
       // Turn off / on some peripherals at night & morning
       int minutesToday = hour() * 60 + minute();
+
+#ifdef FOURMINUTEDAY
+      if ( (minute() / 6) % 2 ) {
+        Serial.println("   !!DEBUG: Cycling to NIGHT every FOUR minutes because of ""#define FOURMINUTEDAY""");
+
+#else
       Serial.print("Minute of day is: ");
       Serial.print(minutesToday);
-      if ( (minutesToday < sunrise) or (minutesToday > sunset - 60) ) {     // jjj removed 60 to save even more   if ( (minutesToday < sunrise - 60) or (minutesToday > sunset - 60) ) {
+      if ( (minutesToday < sunrise) or (minutesToday > sunset - 60) ) {
 
         Serial.print(", which is Night time. We will switch to day at minute #");
         Serial.println(sunrise);     // jjj removed 60 to save even more     Serial.println(sunrise - 60); 
+#endif
         // We're not between "half an hour before sunrise" and sunset, so turn stuff off.
         // First set variables and record in eeprom that we're in power save mode.
         if (!powerSave) {
@@ -912,11 +922,13 @@ void loop()
           //if powerSave was set, that means we're transitioning to daytime now.
           // Until I figure out how to restart the Ethernet, just force a watchdog timeout with delays.
           enableEthernet();
-  
+
+          /* No longer needed?
           Serial.println(F("   ! ! !   We just switched to DAY. Since we can't reset ETHERNET very well, we are rebooting soon!!! ! ! "));
           delay(10000);
           delay(20000);
           delay(30000);
+          */
         }
        
         //This below kind of doesn't count, because of the reboot above. We really should never get here.
@@ -1313,39 +1325,49 @@ float get_wind_speed()
     return(windSpeed);
 }
 
-//Read the wind direction sensor, return heading in degrees
+//Read the wind direction sensor, return heading in degrees, mutate winddirRaw to contain the raw ADC value read
 int get_wind_direction()
 {
-    unsigned int adc;
+  unsigned int adc;
 
-    adc = analogRead(WDIR); // get the current reading from the sensor
-    winddirRaw = adc;       // Save the ADC value for troubleshooting.
+  adc = analogRead(WDIR); // get the current reading from the sensor
+  winddirRaw = adc;       // Save the ADC value for troubleshooting.
 
-    // The following table is ADC readings for the wind direction sensor output, sorted from low to high.
-    // Each threshold is the midpoint between adjacent headings. The output is degrees for that ADC reading.
-    // Note that these are not in compass degree order! See Weather Meters datasheet for more information.
+  float temp = RTC.temperature() / 4.0; // Get RTC temperature in degrees C
 
-    if (adc < 380) { strWindDir = "ESE"; return (113); }    // ESE
-    if (adc < 393) { strWindDir = "ENE"; return  (68); }    // ENE
-    if (adc < 414) { strWindDir = "E";   return  (90); }    // E
-    if (adc < 456) { strWindDir = "SSE"; return (158); }    // SSE
-    if (adc < 508) { strWindDir = "SE";  return (135); }    //  SE
-    if (adc < 551) { strWindDir = "SSW"; return (203); }    // SSW
-    if (adc < 615) { strWindDir = "S";   return (180); }    // S
-    if (adc < 680) { strWindDir = "NNE"; return  (23); }    // NNE
-    if (adc < 746) { strWindDir = "NE";  return  (45); }    //  NE
-    if (adc < 801) { strWindDir = "WSW"; return (248); }    // WSW
-    if (adc < 833) { strWindDir = "SW";  return (225); }    //  SW
-    if (adc < 878) { strWindDir = "NNW"; return (338); }    // NNW
-    if (adc < 913) { strWindDir = "N";   return   (0); }    // N
-    if (adc < 940) { strWindDir = "WNW"; return (293); }    // WNW
-    if (adc < 967) { strWindDir = "NW";  return (315); }    //  NW
-    if (adc < 990) { strWindDir = "W";   return (270); }    // W
-    if (adc < 1010) {strWindDir = "W";   return (270); }    // W - Sometimes 270 returns higher than 990.
-    strWindDir = "ERR";
-    return (-10); // error, disconnected?
+  // These constants were computed based on Marshall data from 8/28 to 9/19 using a custom best-fit program
+  float p0 = -6.60705608404363;
+  float p1 = 4.80599452080313;
+  float p2 = 862.081604616306;
+  float p3 = -0.130310898086486;
+
+  // Adjust raw ADC to somewhat correct for temperature
+  float t = temp - 30;
+  float wmin = p0 + p1 * t + p3 * t * t;
+  adc = (int)(wmin + (p2 - wmin) * adc / p2);
+
+  // These cutoffs were selected with the same best-fit program that generated the constants
+  // The direction order is based on the resistances produced by the wind vane, and therefore
+  // the voltages that show up on the ADC from the voltage divider
+  if (adc < 400) { strWindDir = "ERL"; return (-10); }    // Error; ADC value too low
+  if (adc < 454) { strWindDir = "ESE"; return (113); }    // ESE
+  if (adc < 475) { strWindDir = "ENE"; return  (68); }    // ENE
+  if (adc < 509) { strWindDir = "E";   return  (90); }    // E
+  if (adc < 553) { strWindDir = "SSE"; return (158); }    // SSE
+  if (adc < 589) { strWindDir = "SE";  return (135); }    //  SE
+  if (adc < 615) { strWindDir = "SSW"; return (203); }    // SSW
+  if (adc < 659) { strWindDir = "S";   return (180); }    // S
+  if (adc < 709) { strWindDir = "NNE"; return  (23); }    // NNE
+  if (adc < 769) { strWindDir = "NE";  return  (45); }    //  NE
+  if (adc < 819) { strWindDir = "WSW"; return (248); }    // WSW
+  if (adc < 848) { strWindDir = "SW";  return (225); }    //  SW
+  if (adc < 891) { strWindDir = "NNW"; return (338); }    // NNW
+  if (adc < 924) { strWindDir = "N";   return   (0); }    // N
+  if (adc < 951) { strWindDir = "WNW"; return (293); }    // WNW
+  if (adc < 980) { strWindDir = "NW";  return (315); }    //  NW
+  if (adc < 1015){ strWindDir = "W";   return (270); }    // W
+  else           { strWindDir = "ERH"; return (-20); }    // Error; ADC value too high
 }
-
 
 /*-------- NTP code ----------*/
 /*****************************************************************************
