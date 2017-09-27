@@ -8,16 +8,15 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "L13bB1"; // jjj
+const String wxVersion = "L14cB1"; // jjj
 const String wxOwner = "-DJ-";
-const byte IPgw = 254;    //Marshall must be 254
-const byte IPq3 = 243;    //Marshall must be 243
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
 const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
-const String startupMessage = "UM Weather Station (ver L13bB1 2017/09/15) starting at ms ";
+const String startupMessage = "UM Weather Station (ver L13gB1 2017/09/26 INA219a smoothing) starting at ms ";
+//#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
 #include <avr/wdt.h>   // WatchDog Timer. If I hit an endless loop, reset. Kindof. May not reset Ethernet properly.
@@ -43,6 +42,13 @@ const String startupMessage = "UM Weather Station (ver L13bB1 2017/09/15) starti
 #define logOneLine2( line, base) Serial.println(line,base);
 #define logSome( line) Serial.print(line);
 
+// Redefine INA219 sample & average so we don't have to modify the header. This is probably poor coding practice. I'm sorry.
+// First line is original and is used to initialize the INA219. 2nd line is what we're copying. 3rd line makes it happen. Note 0x0078 in 3rd line.
+#define INA219_CONFIG_SADCRES_12BIT_1S_532US   (0x0018)  // 1 x 12-bit shunt sample
+#define INA219_CONFIG_SADCRES_12BIT_128S_69MS  (0x0078)  // 128 x 12-bit shunt samples averaged together
+//#undef  INA219_CONFIG_SADCRES_12BIT_1S_532US
+//#define INA219_CONFIG_SADCRES_12BIT_1S_532US   (0x0078)  // REDEFINE the 1 sample to really be 128 samples so we don't have to modify Adafruit_INA219.h
+
 
 Adafruit_INA219 ina219a(ina219a_HWaddr);     // First  ina219 sensor: A
 Adafruit_INA219 ina219b(ina219b_HWaddr);     // Second ina219 sensor: B
@@ -51,13 +57,13 @@ BME280 bme280b;                              // Second bme280 sensor: B
 MPL3115A2 myPressure;            //Sparkfun pressure sensor
 HTU21D myHumidity;               //Sparkfun humidity sensor
 
+
 //Hardware pin definitions, weather station
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // digital I/O pins
 const byte WSPEED = 3;
 const byte RAIN = 2;
 const byte STAT1 = 7;
-const byte STAT2 = 8; //TODO: This pin (second status LED) seems wrong
 
 const byte PIN_ETH_DISABLE = 8; // Ethernet power control; on=LOW, off=HIGH
 const byte ETH_DISABLED = HIGH;
@@ -68,8 +74,8 @@ const byte UBIQUITI_DISABLED = LOW;
 const byte UBIQUITI_ENABLED = HIGH;
 
 const byte PIN_SOLAR_DISABLE = 16;    // Solar panel control; on=LOW, off=HIGH
-const byte SOLAR_DISABLED = HIGH;
-const byte SOLAR_ENABLED = LOW;
+const byte SOLAR_DISABLED = LOW;
+const byte SOLAR_ENABLED = HIGH;
 
 // analog I/O pins
 const byte WDIR = A0;
@@ -79,10 +85,10 @@ const byte REFERENCE_3V3 = A3;
 const byte SLA_BATT = A12;
 
 // I2C devices
-// 0x40  64 Humidity/temp sensor?
+// 0x40  64 Sparkfun Humidity/temp sensor?
 // 0x44  68 INA219 on 3rd address (1st address is 0x40, conflicts with humidty sensor)
 // 0x41  65 INA219 on 2nd address
-// 0x60  96 Humidity/temp sensor?
+// 0x60  96 Sparkfun Humidity/temp sensor?
 // 0x76 118 BME280 environmental sensor
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -199,10 +205,26 @@ int   sla_raw = 0;         // integer, raw 0-1023 reading from Analog Port
 float sla_30sec = 11.8;    // 10 second rolling average of SLA battery voltage (~12v)
 int   sla_10secRaw = 1180; // 10 second average of AnalogPort reading (0-1023).
 float light_lvl = 455;     // [analog value from 0 to 1023]
+
+//INA 219 volt & current sensor. MMA means Modified Moving Average. PWM charging requires some smoothing.
 float ina219a_volts;
 float ina219a_current;
 float ina219b_volts;
 float ina219b_current;
+float ina219a_MMAtemp;
+float ina219a_MMAcurrentSum;
+float ina219a_MMAcurrentAvg;
+float ina219a_MMAvoltSum;
+float ina219a_MMAvoltAvg;
+const byte ina219a_MMAcount = 128;
+float shuntvoltage = 0;
+float busvoltage = 0;
+float current_mA = 0;
+float loadvoltage = 0;
+unsigned int ina219a_MMAmillis = 0;
+unsigned int ina219a_MMAloops = 0;
+
+
 
 // volatiles are subject to modification by IRQs
 volatile unsigned long raintime, rainlast, raininterval, rain;
@@ -301,14 +323,38 @@ void enableEthernet() {
   pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                 // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_ENABLED);  // turns Ubiquiti on
 
+  // Ubiquiti takes 30 seconds to turn on and Ethernet takes 5; try to make them ready at the same time
+  // This a poor way to accomplish this task; better would be to ping
+  for (int i=0; i<30; i++) {
+    wdt_reset();
+    delay(1000);
+  }
+
   pinMode(PIN_ETH_DISABLE, OUTPUT);                     // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_ENABLED);           // turns ETH shield on
+  
+  // ETH takes 5 seconds to be ready to send when turned on
+  // This a poor way to accomplish this task; better would be to ping
+  for (int i=0; i<5; i++) {
+    wdt_reset();
+    delay(1000);
+  }
+  
+  Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // jjj Eth must be initialized after each power up
+
 }
 
 // Turns off power for network components to save power
 void disableEthernet() {
   pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                  // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_DISABLED);  // turns Ubiquiti off
+
+                                             //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
+                                             //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
+  pinMode(MOSI, INPUT);                      //             prevents leakage through ESD diodes
+  pinMode(MISO, INPUT);                      //             prevents leakage through ESD diodes
+  pinMode(SCK, INPUT);                       //             prevents leakage through ESD diodes
+  pinMode(SS, INPUT);                        //             prevents leakage through ESD diodes
 
   pinMode(PIN_ETH_DISABLE, OUTPUT);                      // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_DISABLED);           // turns ETH shield off
@@ -354,7 +400,7 @@ void rainIRQ()
 void wspeedIRQ()
 // Activated by the magnet in the anemometer (2 ticks per rotation), attached to input D3
 {
-    if (millis() - lastWindIRQ > 20) // Ignore switch-bounce glitches less than 10ms (142MPH max reading) after the reed switch closes. Now 20ms, 70mph max.
+    if (millis() - lastWindIRQ > 25) // Ignore switch-bounce glitches less than 10ms (142MPH max reading) after the reed switch closes. 20ms = 74mph max, 25ms = 60mph max
     {
         lastWindIRQ = millis(); //Grab the current time
         windClicks++; //There is 1.492MPH for each click per second.
@@ -410,6 +456,10 @@ void setup()
       Serial.println("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0).");
       EEPROM.update(eePowerSave, false);
     }
+
+    // Set the common GND source for "YYD-3" FET switches to LOW OUTPUT because it will need to be this way regardless of which bootup mode we're in
+    digitalWrite(30, LOW);                     //             must always be low
+    pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
     
     // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
     Serial.print("Reading EEPROM to see power save state: ");
@@ -417,37 +467,13 @@ void setup()
       Serial.print("Shutting off Eth and Ubiquiti... ");
       powerSave = true;
 
-      digitalWrite(30, LOW);                     //             must always be low
-      pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
-
-      digitalWrite(PIN_UBIQUITI_DISABLE, LOW);   //             turns Ubiquiti off (on=HIGH / off=low, default=on)
-      pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);     //             prepares Ubiquiti power control pin
-
-                                                 //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
-                                                 //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
-      pinMode(MOSI, INPUT);                      //             prevents leakage through ESD diodes
-      pinMode(MISO, INPUT);                      //             prevents leakage through ESD diodes
-      pinMode(SCK, INPUT);                       //             prevents leakage through ESD diodes
-      pinMode(SS, INPUT);                        //             prevents leakage through ESD diodes
-                                                 //             next, power to Ethernet shield is turned off 
-      digitalWrite(PIN_ETH_DISABLE, HIGH);       //             ETH shield off (on=low / off=HIGH, default=on)
-      pinMode(PIN_ETH_DISABLE, OUTPUT);          //             sets ETH power control pin to output
-
+      disableEthernet();
 
     } else {
       Serial.print("Turning on Eth and Ubiquiti... ");
       powerSave = false;
-                                                 //             The Ubiquiti will be powered on. It takes ?? seconds to establish a link
-      digitalWrite(PIN_UBIQUITI_DISABLE, HIGH);  //             Ubiquiti on (on=HIGH / off=low, default=on)
-      pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);     //             sets Ubiquiti power control pin to output
-    
-      digitalWrite(30, LOW);                     //             must always be low
-      pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
 
-                                                 //             The Ethernet shield will be powered on (takes 3 seconds to go life). 
-                                                 //             No need to reprogram the SPI pins, Ethernet.begin will do that (what about SS??)
-      digitalWrite(PIN_ETH_DISABLE, LOW);        //             ETH shield on (on=low / off=HIGH, default=on)
-      pinMode(PIN_ETH_DISABLE, OUTPUT);          //             sets ETH power control pin to output
+      enableEthernet();
 
       //Can't do this, it will set off the Watchdog. We can discuss disabling the watchdog, but I consider this a poor way to accomplish this task.
       //delay(30000);                            //             give eth and U 30 seconds time to boot up (better would be to  ping!)
@@ -458,7 +484,6 @@ void setup()
 
     //Weather Station stuff
     pinMode(STAT1, OUTPUT); //Status LED Blue
-    pinMode(STAT2, OUTPUT); //Status LED Green
 
     pinMode(WSPEED, INPUT_PULLUP); // input from wind meters windspeed sensor
     pinMode(RAIN, INPUT_PULLUP); // input from wind meters rain gauge sensor
@@ -886,12 +911,19 @@ void loop()
       * * * * * * * * * * * * * * * * * */
       // Turn off / on some peripherals at night & morning
       int minutesToday = hour() * 60 + minute();
+
+#ifdef FOURMINUTEDAY
+      if ( (minute() / 6) % 2 ) {
+        Serial.println("   !!DEBUG: Cycling to NIGHT every FOUR minutes because of ""#define FOURMINUTEDAY""");
+
+#else
       Serial.print("Minute of day is: ");
       Serial.print(minutesToday);
-      if ( (minutesToday < sunrise) or (minutesToday > sunset - 60) ) {     // jjj removed 60 to save even more   if ( (minutesToday < sunrise - 60) or (minutesToday > sunset - 60) ) {
+      if ( (minutesToday < sunrise) or (minutesToday > sunset - 60) ) {
 
         Serial.print(", which is Night time. We will switch to day at minute #");
         Serial.println(sunrise);     // jjj removed 60 to save even more     Serial.println(sunrise - 60); 
+#endif
         // We're not between "half an hour before sunrise" and sunset, so turn stuff off.
         // First set variables and record in eeprom that we're in power save mode.
         if (!powerSave) {
@@ -912,11 +944,13 @@ void loop()
           //if powerSave was set, that means we're transitioning to daytime now.
           // Until I figure out how to restart the Ethernet, just force a watchdog timeout with delays.
           enableEthernet();
-  
+
+          /* No longer needed?
           Serial.println(F("   ! ! !   We just switched to DAY. Since we can't reset ETHERNET very well, we are rebooting soon!!! ! ! "));
           delay(10000);
           delay(20000);
           delay(30000);
+          */
         }
        
         //This below kind of doesn't count, because of the reboot above. We really should never get here.
@@ -1037,6 +1071,30 @@ void loop()
     }
   } //END if(!ethStopped)
 
+
+  //INA 219 averaging. Shoot for maybe 80-120 readings a second?
+  if (ina219a_MMAmillis + 8 < millis()) {
+  
+    shuntvoltage = ina219a.getShuntVoltage_mV();
+    busvoltage = ina219a.getBusVoltage_V();
+    ina219a_MMAtemp = busvoltage + (shuntvoltage / 1000);
+
+    ina219a_MMAvoltSum -= ina219a_MMAvoltAvg;
+    ina219a_MMAvoltSum += ina219a_MMAtemp;
+    ina219a_MMAvoltAvg  = ina219a_MMAvoltSum / ina219a_MMAcount;
+    ina219a_volts = ina219a_MMAvoltAvg;
+
+    ina219a_MMAtemp = ina219a.getCurrent_mA();  
+    ina219a_MMAcurrentSum -= ina219a_MMAcurrentAvg;
+    ina219a_MMAcurrentSum += ina219a_MMAtemp;
+    ina219a_MMAcurrentAvg  = ina219a_MMAcurrentSum / ina219a_MMAcount;
+    ina219a_current = ina219a_MMAcurrentAvg * -1; // * -1 because it's wired backwards for convenience. Gotta reverse the sign.
+
+    ina219a_MMAloops++;
+
+  }
+
+
   loopCounter++;
 } // END OF LOOP()
 
@@ -1083,7 +1141,7 @@ From: http://forum.arduino.cc/index.php?topic=66426.15
 // NOTE if this is disabled, everything runs on battery power, even in daytime.
 void enableSolar() {
   Serial.println("Solar panel ENABLED via enableSolar();");
-  pinMode(PIN_SOLAR_DISABLE, OUTPUT);                 // prepares Solar Panel control pin
+  pinMode(PIN_SOLAR_DISABLE, INPUT);                 // prepares Solar Panel control pin
   digitalWrite(PIN_SOLAR_DISABLE, SOLAR_ENABLED);     // turns Solar Panel on
 
 }
@@ -1193,28 +1251,14 @@ void calcWeather()
     }
 
     //Get voltage and current from INA219 sensors
-    float shuntvoltage = 0;
-    float busvoltage = 0;
     float current_mA = 0;
-    float loadvoltage = 0;
     float avg_plus = 0;
     float avg_minus = 0;
 
     // INA219 AAAAAA
-    shuntvoltage = ina219a.getShuntVoltage_mV();
-    busvoltage = ina219a.getBusVoltage_V();
-    current_mA = ina219a.getCurrent_mA();
-    loadvoltage = busvoltage + (shuntvoltage / 1000);
+    // Now calculated near the end of loop() with an MMA targeting ~100 samples a second.
 
-    avg_plus  = loadvoltage / VOLTAGE_AVG_SIZE;
-    avg_minus = ina219a_volts / VOLTAGE_AVG_SIZE;
-    ina219a_volts = ina219a_volts - avg_minus + avg_plus;
-
-    avg_plus = current_mA / VOLTAGE_AVG_SIZE;
-    avg_minus = ina219a_current / VOLTAGE_AVG_SIZE;
-    ina219a_current = ina219a_current -avg_minus + avg_plus;
-
-    // INA219 BBBBBB
+    // INA219 BBBBBB   <-- this one isn't exposed to PWM voltage, so we'll just leave it.
     shuntvoltage = ina219b.getShuntVoltage_mV();
     busvoltage = ina219b.getBusVoltage_V();
     current_mA = ina219b.getCurrent_mA();
@@ -1325,25 +1369,25 @@ int get_wind_direction()
     // Each threshold is the midpoint between adjacent headings. The output is degrees for that ADC reading.
     // Note that these are not in compass degree order! See Weather Meters datasheet for more information.
 
-    if (adc < 380) { strWindDir = "ESE"; return (113); }    // ESE
-    if (adc < 393) { strWindDir = "ENE"; return  (68); }    // ENE
-    if (adc < 414) { strWindDir = "E";   return  (90); }    // E
-    if (adc < 456) { strWindDir = "SSE"; return (158); }    // SSE
-    if (adc < 508) { strWindDir = "SE";  return (135); }    //  SE
-    if (adc < 551) { strWindDir = "SSW"; return (203); }    // SSW
-    if (adc < 615) { strWindDir = "S";   return (180); }    // S
-    if (adc < 680) { strWindDir = "NNE"; return  (23); }    // NNE
-    if (adc < 746) { strWindDir = "NE";  return  (45); }    //  NE
-    if (adc < 801) { strWindDir = "WSW"; return (248); }    // WSW
-    if (adc < 833) { strWindDir = "SW";  return (225); }    //  SW
-    if (adc < 878) { strWindDir = "NNW"; return (338); }    // NNW
-    if (adc < 913) { strWindDir = "N";   return   (0); }    // N
-    if (adc < 940) { strWindDir = "WNW"; return (293); }    // WNW
-    if (adc < 967) { strWindDir = "NW";  return (315); }    //  NW
-    if (adc < 990) { strWindDir = "W";   return (270); }    // W
-    if (adc < 1010) {strWindDir = "W";   return (270); }    // W - Sometimes 270 returns higher than 990.
-    strWindDir = "ERR";
-    return (-10); // error, disconnected?
+    if      (adc < 81)   { strWindDir = "ERL"; return (-10); }
+    else if (adc < 162)  { strWindDir = "ESE"; return (113); }   // ESE
+    else if (adc < 188)  { strWindDir = "ENE"; return  (68); }   // ENE
+    else if (adc < 227)  { strWindDir = "E";   return  (90); }   // E
+    else if (adc < 305)  { strWindDir = "SSE"; return (158); }   // SSE
+    else if (adc < 395)  { strWindDir = "SE";  return (135); }   // SE
+    else if (adc < 466)  { strWindDir = "SSW"; return (203); }   // SSW
+    else if (adc < 559)  { strWindDir = "S";   return (180); }   // S
+    else if (adc < 651)  { strWindDir = "NNE"; return  (23); }   // NNE
+    else if (adc < 733)  { strWindDir = "NE";  return  (45); }   // NE
+    else if (adc < 800)  { strWindDir = "WSW"; return (248); }   // WSW
+    else if (adc < 835)  { strWindDir = "SW";  return (225); }   // SW
+    else if (adc < 883)  { strWindDir = "NNW"; return (338); }   // NNW
+    else if (adc < 919)  { strWindDir = "N";   return   (0); }   // N
+    else if (adc < 945)  { strWindDir = "WNW"; return (293); }   // WNW
+    else if (adc < 974)  { strWindDir = "NW";  return (315); }   // NW
+    else if (adc < 1005) { strWindDir = "W";   return (270); }   // W
+    else                 { strWindDir = "ERH"; return (-10); }
+    return (-10); // Never get here
 }
 
 
@@ -1537,7 +1581,9 @@ byte uploadWeather()
   
   // Connect to CSS website, do a PUT with weather values. Should be called once for every minute of weather data.
   logSome(F("  uploadWeather called, building string. Bytes free: "));
-  logOneLine(freeRam());
+  logSome(freeRam());
+  logSome(". ina219a readings this minute: ");
+  logOneLine(ina219a_MMAloops);
   byte uploadStatus = 90; //90 = haven't tried stopping the client yet.
 
   // Preemptively close any open connections, to keep sockets available.
@@ -1701,37 +1747,43 @@ String getWeatherString() {
     weatherString += "0";
   }
 
-  // 12b: temperature, F, inside BB from BME280b, instant
+  // 13 (was 12b): temperature, F, inside BB from BME280b, instant
   weatherString += String(charComma);
   weatherString += String(bme280b.readTempF(), 2);
 
-  // 12c: humidity, %, inside BB bme280b, instant (for checking dewpoint eventually)
+  // 14 (was 12c): humidity, %, inside BB bme280b, instant (for checking dewpoint eventually)
   weatherString += String(charComma);
   weatherString += String(bme280b.readFloatHumidity(), 0);
 
-  // 13: Current on ina219 sensor A (raw battery @ 12v maybe?)
+  // 15: Current on ina219 sensor A (Solar Panel / CC @ 12v maybe?)
   weatherString += String(charComma);
-  weatherString += String(ina219a_current, 2);
+  if (ina219a_current < 1000) weatherString += "0";
+  if (ina219a_current < 100)  weatherString += "0";
+  if (ina219a_current < 10)   weatherString += "0";
+  weatherString += String(ina219a_current, 0);
   //weatherString += String("mA");
 
-  // 14: Voltage on ina219 sensor A (raw battery @ 12v maybe?)
+  // 16: Voltage on ina219 sensor A (Solar Panel @ 12v maybe?)
   weatherString += String(charComma);
   weatherString += String(ina219a_volts, 2);
   //weatherString += String("v");
   //weatherString += String(batt_lvl, 2);
 
-  // 15: Power on ina219 sensor A (watts battery)
+  // 17: Power on ina219 sensor A (watts battery)
 //  weatherString += String(charComma);
 //  weatherString += String(ina219a_volts * ina219a_current / 1000, 2);
 //  weatherString += String("w");
 
 
-  // 16: Current on ina219 sensor B (after buck to 5v maybe?)
+  // 17: Current on ina219 sensor B (after buck to 5v maybe?)
   weatherString += String(charComma);
-  weatherString += String(ina219b_current, 2);
+  if (ina219b_current < 1000) weatherString += "0";
+  if (ina219b_current < 100)  weatherString += "0";
+  if (ina219b_current < 10)   weatherString += "0";
+  weatherString += String(ina219b_current, 0);
   //weatherString += String("mA");
 
-  // 17: Voltage on ina219 sensor A (after buck to 5v maybe?)
+  // 18: Voltage on ina219 sensor A (after buck to 5v maybe?)
   weatherString += String(charComma);
   weatherString += String(ina219b_volts, 2);
   //weatherString += String("v");
@@ -1749,11 +1801,11 @@ String getWeatherString() {
 //    weatherString += String(light_lvl, 2);
 //  weatherString += "0";
 
-  // 20: run time in days.HH:MM:SS
+  // 19: run time in H:MM:SS
   weatherString += String(charComma);
-  weatherString += String(days);
-  weatherString += String(".");
-  if (hours < 10) weatherString += String('0');
+  //weatherString += String(days);
+  //weatherString += String(".");
+  //if (hours < 10) weatherString += String('0');
   weatherString += String(hours);
   weatherString += String(":");
   if (minutes < 10) weatherString += String('0');
@@ -1773,7 +1825,7 @@ String getWeatherString() {
 //    weatherString += String(charComma);
 //    weatherString += String(freeRam());
 
-  // 21: print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
+  // 20: print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
   if (true) {
     weatherString += String(charComma);
     weatherString += String("wd=");
@@ -1786,7 +1838,7 @@ String getWeatherString() {
     weatherString += strWindDir;
   }
 
-  // 22+: Assorted info and error values
+  // 21+: Assorted info and error values
   // Tack on a ,R if we've rebooted to make it easier to spot them
   if(justRestarted) {
     weatherString += ",R";
