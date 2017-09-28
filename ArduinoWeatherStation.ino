@@ -8,14 +8,15 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "L14cB1"; // jjj
+const String wxVersion = "L16eB1"; // jjj
 const String wxOwner = "-DJ-";
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
 const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
-const String startupMessage = "UM Weather Station (ver L13gB1 2017/09/26 INA219a smoothing) starting at ms ";
+const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
+const String startupMessage = "UM Weather Station (ver L16eB1 2017/09/27 more smoothing, text fixing) starting at ms ";
 //#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
@@ -209,18 +210,25 @@ float light_lvl = 455;     // [analog value from 0 to 1023]
 //INA 219 volt & current sensor. MMA means Modified Moving Average. PWM charging requires some smoothing.
 float ina219a_volts;
 float ina219a_current;
-float ina219b_volts;
-float ina219b_current;
-float ina219a_MMAtemp;
 float ina219a_MMAcurrentSum;
 float ina219a_MMAcurrentAvg;
 float ina219a_MMAvoltSum;
 float ina219a_MMAvoltAvg;
-const byte ina219a_MMAcount = 128;
+const int ina219a_MMAcount = 2048;
+
+float ina219b_volts;
+float ina219b_current;
+float ina219b_MMAcurrentSum;
+float ina219b_MMAcurrentAvg;
+float ina219b_MMAvoltSum;
+float ina219b_MMAvoltAvg;
+const int ina219b_MMAcount = 128;
+
 float shuntvoltage = 0;
 float busvoltage = 0;
 float current_mA = 0;
 float loadvoltage = 0;
+float ina219_MMAtemp;
 unsigned int ina219a_MMAmillis = 0;
 unsigned int ina219a_MMAloops = 0;
 
@@ -325,7 +333,17 @@ void enableEthernet() {
 
   // Ubiquiti takes 30 seconds to turn on and Ethernet takes 5; try to make them ready at the same time
   // This a poor way to accomplish this task; better would be to ping
-  for (int i=0; i<30; i++) {
+  Serial.println();
+  Serial.print("Ubiquiti startup delay, 25 seconds:    ");
+  for (int i=25; i>0; i--) {
+
+    // Count down the seconds on Serial. Character 8 is the backspace.
+    Serial.write(8);
+    if (i > 9) {
+      Serial.write(8);
+    }
+    Serial.print(i);
+
     wdt_reset();
     delay(1000);
   }
@@ -335,12 +353,22 @@ void enableEthernet() {
   
   // ETH takes 5 seconds to be ready to send when turned on
   // This a poor way to accomplish this task; better would be to ping
-  for (int i=0; i<5; i++) {
+  Serial.println();
+  Serial.print("Ethernet startup delay, 5 more seconds:    ");
+  for (int i=5; i>0; i--) {
+
+    // Count down the seconds on Serial. Character 8 is the backspace.
+    Serial.write(8);
+    if (i > 9) {
+      Serial.write(8);
+    }
+    Serial.print(i);
+
     wdt_reset();
     delay(1000);
   }
   
-  Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // jjj Eth must be initialized after each power up
+  Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
 
 }
 
@@ -701,7 +729,7 @@ void setup()
     // give the Ethernet shield a second to initialize:
     delay(1000);
     Serial.print(millis());
-    Serial.print(F("ms: Started Ethernet (watchdog enabled). Local IP is "));
+    Serial.print(F("ms: Started Ethernet (and watchdog enabled). Local IP is "));
     Serial.println(Ethernet.localIP());
 
     // Request the date & time from RTC or NTP
@@ -710,9 +738,9 @@ void setup()
       // If we have a working RTC, let's just use it. Every few minutes we'll check for NTP too.
       Serial.println(F("RTC selected as time source."));
       setSyncProvider(RTC.get);
-      setSyncInterval(300);           // Update system time with the RTC because it actually slews pretty fast; 4 second an hour is typical.
+      setSyncInterval(300);           // Update system time often because it actually slews pretty fast; 4 second an hour is typical.
     } else {
-      // 0 Means the RTC didn't work, set NTP as the sync provider, with an agressive Sync Interval because we depend on it.
+      // 0 Means the RTC didn't work, set NTP as the sync provider, with an initially agressive Sync Interval because we depend on it.
       Serial.print(F("No RTC? Sending NTP packet at "));
       Serial.println(millis());
       setSyncProvider(getNtpTime);    // Use the time library's setSyncProvider to check periodically for time
@@ -965,10 +993,12 @@ void loop()
       *  B A T T E R Y   P R O T E C T I O N
       * * * * * * * * * * * * * * * * * * * * * * * * */
 
-      if (ina219b_current > 350) {
+      if (ina219b_current > 700) {
 
         // Charging too fast. Poor man's slowdown: turn off the solar panel for a bit. 8-o
-        Serial.println(F("Pausing Solar Panels because charge rate was > 350ma (==700ma because INA reports half real value)"));
+        Serial.println();
+        Serial.print(hour()); Serial.print(":"); Serial.print(minute()); Serial.print(":"); Serial.print(second());
+        Serial.println(F(": Pausing Solar Panels because charge rate was > 350ma (==700ma because INA reports half real value)"));
         pauseSolar = true;
         pauseSolarStartTime = now();
         disableSolar();
@@ -979,7 +1009,9 @@ void loop()
         if (pauseSolar) {
           if ( (pauseSolarStartTime + pauseSolarMinutes * 60) > now() ) {
             //It's been enough minutes with the Panels off. Turn them back on.
-            Serial.println(F("RESUMING Solar Panels: it's been long enough with them turned off"));
+            Serial.println();
+            Serial.print(hour()); Serial.print(":"); Serial.print(minute()); Serial.print(":"); Serial.print(second());
+            Serial.println(F(": RESUMING Solar Panels, it's been long enough with them turned off"));
             pauseSolar = false;
             enableSolar();
           }
@@ -999,10 +1031,10 @@ void loop()
       if (second() == 0) {
     //if (true) {  // for STRESS TEST we go once a second.
         // Once a minute, on zero seconds (by NTP/RTC time, not since boot time), upload the weather.
-        ShowSockStatus();   //DEBUG: print IP Socket status on serial.
-        //printWeather();     //DEBUG: print a slightly different weather string on serial.
+        //printWeather();      //DEBUG: print a slightly different weather string on serial.
         Serial.println(getWeatherString());
         uploadWeather();
+        ina219a_MMAloops = 0;  //Reset to zero after upload (even if not successful)
       }
       if ((second() == 25) and (minutes == 55)) {
         //refresh DHCP once an hour if we're using it. NTP/RTC second() so we don't do it same time as an upload. Runtime minutes so it's after an hour of running.
@@ -1017,7 +1049,7 @@ void loop()
     **/
     //if (justBooted) Serial.println(getWeatherString());               // print every second for the first 15 secs after booting.
     //else if (seconds % 10 == 0) Serial.println(getWeatherString());   // then every 10 seconds
-    if (justBooted and seconds % 3 == 0) printWeather();                // print every second for the first 15 secs after booting.
+    if (justBooted and seconds % 3 == 0) Serial.println(getWeatherString());                // print every second for the first 15 secs after booting.
     else if (0) { // print the seconds on serial
       Serial.write(8);
       if (second() > 9) {
@@ -1041,7 +1073,7 @@ void loop()
       if (client.available()) {
         ethLastMillis = millis();
         char c = client.read();
-        Serial.print(c);
+        if (enableEthDump2Serial) Serial.print(c);
       } else {
         break;
       }
@@ -1072,25 +1104,46 @@ void loop()
   } //END if(!ethStopped)
 
 
-  //INA 219 averaging. Shoot for maybe 80-120 readings a second?
+  //INA 219 averaging. Gets about 60-70 readings a second at time of writing.
   if (ina219a_MMAmillis + 8 < millis()) {
   
     shuntvoltage = ina219a.getShuntVoltage_mV();
     busvoltage = ina219a.getBusVoltage_V();
-    ina219a_MMAtemp = busvoltage + (shuntvoltage / 1000);
+    ina219_MMAtemp = busvoltage + (shuntvoltage / 1000.0);
 
     ina219a_MMAvoltSum -= ina219a_MMAvoltAvg;
-    ina219a_MMAvoltSum += ina219a_MMAtemp;
+    ina219a_MMAvoltSum += ina219_MMAtemp;
     ina219a_MMAvoltAvg  = ina219a_MMAvoltSum / ina219a_MMAcount;
     ina219a_volts = ina219a_MMAvoltAvg;
 
-    ina219a_MMAtemp = ina219a.getCurrent_mA();  
+    ina219_MMAtemp = ina219a.getCurrent_mA();  
     ina219a_MMAcurrentSum -= ina219a_MMAcurrentAvg;
-    ina219a_MMAcurrentSum += ina219a_MMAtemp;
+    ina219a_MMAcurrentSum += ina219_MMAtemp;
     ina219a_MMAcurrentAvg  = ina219a_MMAcurrentSum / ina219a_MMAcount;
-    ina219a_current = ina219a_MMAcurrentAvg * -1; // * -1 because it's wired backwards for convenience. Gotta reverse the sign.
+    ina219a_current = ina219a_MMAcurrentAvg * -2.0; // * -2.0 because a resistor was added and this one's wired backwards for convenience.
 
     ina219a_MMAloops++;
+
+    if (ina219a_MMAloops % 10 == 0) {
+      //Smooth the battery's INA 1/10th as often as the Panel, since the battery doesn't get as buffeted by PWM
+
+      shuntvoltage = ina219b.getShuntVoltage_mV();
+      busvoltage = ina219b.getBusVoltage_V();
+      ina219_MMAtemp = busvoltage + (shuntvoltage / 1000.0);
+  
+      ina219b_MMAvoltSum -= ina219b_MMAvoltAvg;
+      ina219b_MMAvoltSum += ina219_MMAtemp;
+      ina219b_MMAvoltAvg  = ina219b_MMAvoltSum / ina219b_MMAcount;
+      ina219b_volts = ina219b_MMAvoltAvg;
+  
+      ina219_MMAtemp = ina219b.getCurrent_mA();  
+      ina219b_MMAcurrentSum -= ina219b_MMAcurrentAvg;
+      ina219b_MMAcurrentSum += ina219_MMAtemp;
+      ina219b_MMAcurrentAvg  = ina219b_MMAcurrentSum / ina219b_MMAcount;
+      ina219b_current = ina219b_MMAcurrentAvg * 2.0; // double because a resistor was added
+
+      
+    }
 
   }
 
@@ -1113,8 +1166,8 @@ void getRiseSet()
   }
   sunriseDay = day();
   Serial.println();
-  Serial.print("Sunrise today is  "); Serial.print(sunrise); Serial.println(" minutes after midnight.");
-  Serial.print("Sunset  today is " ); Serial.print(sunset);  Serial.println(" minutes after midnight.");
+  Serial.print("Sunrise today is at  "); Serial.print(sunrise / 60); Serial.print(":"); Serial.println(sunrise % 60);
+  Serial.print("Sunset  today is at " ); Serial.print(sunset  / 60); Serial.print(":"); Serial.println(sunset  % 60);
   Serial.print("  Took "); Serial.print(micros() - usTemp);  Serial.println("us to calculate.");
   Serial.println();
 }
@@ -1140,15 +1193,17 @@ From: http://forum.arduino.cc/index.php?topic=66426.15
 // Turns on solar panels, allows battery charging and solar powering of peripherals.
 // NOTE if this is disabled, everything runs on battery power, even in daytime.
 void enableSolar() {
-  Serial.println("Solar panel ENABLED via enableSolar();");
+  Serial.print(hour()); Serial.print(":"); Serial.print(minute()); Serial.print(":"); Serial.print(second());
+  Serial.println(" - Solar panel ENABLED via enableSolar();");
   pinMode(PIN_SOLAR_DISABLE, INPUT);                 // prepares Solar Panel control pin
-  digitalWrite(PIN_SOLAR_DISABLE, SOLAR_ENABLED);     // turns Solar Panel on
+  //digitalWrite(PIN_SOLAR_DISABLE, SOLAR_ENABLED);     // turns Solar Panel on
 
 }
 
 // Turns off solar panels. Use this carefully, it makes everything battery powered.
 void disableSolar() {
-  Serial.println("Solar panel DISABLED via disableSolar();");
+  Serial.print(hour()); Serial.print(":"); Serial.print(minute()); Serial.print(":"); Serial.print(second());
+  Serial.println(" - Solar panel DISABLED via disableSolar();");
   pinMode(PIN_SOLAR_DISABLE, OUTPUT);                  // prepares Solar Panel control pin
   digitalWrite(PIN_SOLAR_DISABLE, SOLAR_DISABLED);     // turns Solar Panel off
 
@@ -1249,37 +1304,6 @@ void calcWeather()
       pressure = myPressure.readPressure();
       if (oldPressure == 0) oldPressure = pressure; //First time, let's not have a "delta" of the current pressure.
     }
-
-    //Get voltage and current from INA219 sensors
-    float current_mA = 0;
-    float avg_plus = 0;
-    float avg_minus = 0;
-
-    // INA219 AAAAAA
-    // Now calculated near the end of loop() with an MMA targeting ~100 samples a second.
-
-    // INA219 BBBBBB   <-- this one isn't exposed to PWM voltage, so we'll just leave it.
-    shuntvoltage = ina219b.getShuntVoltage_mV();
-    busvoltage = ina219b.getBusVoltage_V();
-    current_mA = ina219b.getCurrent_mA();
-    loadvoltage = busvoltage + (shuntvoltage / 1000);
-
-    avg_plus  = loadvoltage / VOLTAGE_AVG_SIZE;
-    avg_minus = ina219b_volts / VOLTAGE_AVG_SIZE;
-    ina219b_volts = ina219b_volts - avg_minus + avg_plus;
-
-    avg_plus = current_mA / VOLTAGE_AVG_SIZE;
-    avg_minus = ina219b_current / VOLTAGE_AVG_SIZE;
-    ina219b_current = ina219b_current -avg_minus + avg_plus;
-
-
-    /* //Diagnostic printout for INA219 sensor
-    Serial.print("Bus: "); Serial.print(busvoltage); Serial.print(" V, ");
-    Serial.print("Shunt: "); Serial.print(shuntvoltage); Serial.print(" mV, ");
-    Serial.print("Load: "); Serial.print(loadvoltage); Serial.print(" V, ");
-    Serial.print("Current: "); Serial.print(current_mA); Serial.print(" mA, ");
-    Serial.print("Power: "); Serial.print(current_mA / 1000 * loadvoltage); Serial.println(" W"); */
-
 
     //Calc dewptf
 
@@ -1586,10 +1610,13 @@ byte uploadWeather()
   logOneLine(ina219a_MMAloops);
   byte uploadStatus = 90; //90 = haven't tried stopping the client yet.
 
+  ShowSockStatus();   //DEBUG: print IP Socket status on serial.
+
   // Preemptively close any open connections, to keep sockets available.
   client.stop();
   while (client.available()) { //read return from socket
-    Serial.write(client.read());
+    char c = client.read();
+    if (enableEthDump2Serial) Serial.write(c);
   }
 
   uploadStatus = 100; //100 = stopped client, but haven't tried connecting.
@@ -1668,13 +1695,13 @@ String getWeatherString() {
 
   // 3: Wind speed, mph, 1 minute average
   weatherString += String(charComma);
-  if (windSpeedAvg < 9.5) weatherString += String('0');
-  weatherString += String(windSpeedAvg, 2);
+  if (windSpeedAvg < 9.95) weatherString += String('0');
+  weatherString += String(windSpeedAvg, 1);
 
   // 4: wind speed, mph, 5 minute max (gust)
   weatherString += String(charComma);
   if (windgustmph_5m < 9.5) weatherString += String('0');
-  weatherString += String(windgustmph_5m, 1);
+  weatherString += String(windgustmph_5m, 0);
 
   // 5: wind direction, 1 minute average
   weatherString += String(charComma);
@@ -1734,11 +1761,6 @@ String getWeatherString() {
 //    weatherString += String(0.0, 2);
   weatherString += String(wxVersion);
 
-  // 11: wind speed, mph, instant (instead of 24h rain)
-  //weatherString += String(charComma);
-  //if (windspeedmph < 10) weatherString += String('0');
-  //weatherString += String(windspeedmph, 1);
-
   // 12: temperature in the enclosure or 2nd sensor if we get one. In Celcius for Jimmy.
   weatherString += String(charComma);
   if (tempc) {
@@ -1749,7 +1771,7 @@ String getWeatherString() {
 
   // 13 (was 12b): temperature, F, inside BB from BME280b, instant
   weatherString += String(charComma);
-  weatherString += String(bme280b.readTempF(), 2);
+  weatherString += String(bme280b.readTempC(), 2);
 
   // 14 (was 12c): humidity, %, inside BB bme280b, instant (for checking dewpoint eventually)
   weatherString += String(charComma);
@@ -1757,10 +1779,19 @@ String getWeatherString() {
 
   // 15: Current on ina219 sensor A (Solar Panel / CC @ 12v maybe?)
   weatherString += String(charComma);
-  if (ina219a_current < 1000) weatherString += "0";
-  if (ina219a_current < 100)  weatherString += "0";
-  if (ina219a_current < 10)   weatherString += "0";
-  weatherString += String(ina219a_current, 0);
+  if (ina219a_current < 0) {
+    //negative numbers. There's a better way using dtostrf(), but that pads with spaces not zeros right? Can't have spaces.
+    weatherString += String("-");
+    if (ina219a_current > -10)  weatherString += "0";
+    if (ina219a_current > -100) weatherString += "0";
+    weatherString += String(ina219a_current * -1, 0);
+  } else {
+    //positive numbers
+    if (ina219a_current < 1000) weatherString += "0";
+    if (ina219a_current < 100)  weatherString += "0";
+    if (ina219a_current < 10)   weatherString += "0";
+    weatherString += String(ina219a_current, 0);
+  }
   //weatherString += String("mA");
 
   // 16: Voltage on ina219 sensor A (Solar Panel @ 12v maybe?)
@@ -1777,10 +1808,19 @@ String getWeatherString() {
 
   // 17: Current on ina219 sensor B (after buck to 5v maybe?)
   weatherString += String(charComma);
-  if (ina219b_current < 1000) weatherString += "0";
-  if (ina219b_current < 100)  weatherString += "0";
-  if (ina219b_current < 10)   weatherString += "0";
-  weatherString += String(ina219b_current, 0);
+  if (ina219b_current < 0) {
+    //negative numbers. There's a better way using dtostrf(), but that pads with spaces not zeros right? Can't have spaces.
+    weatherString += String("-");
+    if (ina219b_current > -10)  weatherString += "0";
+    if (ina219b_current > -100) weatherString += "0";
+    weatherString += String(ina219b_current * -1, 0);
+  } else {
+    //positive numbers
+    if (ina219b_current < 1000) weatherString += "0";
+    if (ina219b_current < 100)  weatherString += "0";
+    if (ina219b_current < 10)   weatherString += "0";
+    weatherString += String(ina219b_current, 0);
+  }
   //weatherString += String("mA");
 
   // 18: Voltage on ina219 sensor A (after buck to 5v maybe?)
@@ -1806,7 +1846,7 @@ String getWeatherString() {
   //weatherString += String(days);
   //weatherString += String(".");
   //if (hours < 10) weatherString += String('0');
-  weatherString += String(hours);
+  weatherString += String(hours + (days * 24));
   weatherString += String(":");
   if (minutes < 10) weatherString += String('0');
   weatherString += String(minutes);
@@ -1828,7 +1868,6 @@ String getWeatherString() {
   // 20: print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
   if (true) {
     weatherString += String(charComma);
-    weatherString += String("wd=");
     weatherString += String(winddirRaw);
   }
   if (true) {
