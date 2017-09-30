@@ -8,19 +8,19 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "L17cB1";
-const String wxOwner = "-DJ-";
+const String wxVersion = "L17eB2";
+const String wxOwner = "-LR-";
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
 const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
-const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver L17cB1 2017/09/29 fix enableEth loop, 5 min solar timeout) starting at ms ";
+const bool enableEthDump2Serial = true;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
+const String startupMessage = "UM Weather Station (ver L17eB2 2017/09/30 add solar pause reporting) starting at ms ";
 //#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
-#include <avr/wdt.h>   // WatchDog Timer. If I hit an endless loop, reset. Kindof. May not reset Ethernet properly.
+#include <avr/wdt.h>   // WatchDog Timer. If I hit an endless loop, reset.
 #include <EEPROM.h>    // will need this if I start writing to eeprom
 #include <Wire.h>      // I2C needed for weather station sensors
 #include <Math.h>      // Need cos() for calculating sunrise & sunset
@@ -122,6 +122,7 @@ bool powerSave = false;     //Set a flag when we're in power save mode. Do some 
 bool ethEnabled = false;    //Set once Eth is enabled because enabling incurs a 30 second pause that we don't want to repeat.
 bool pauseSolar = false;    //We need to charge pausing when it gets hot or if charging too fast. It == battery, box, outside, etc...
 byte pauseSolarMinutes = 5; //How long to leave solar off when we turn it off.
+float pauseSolarChargeCurrent;  //Store the battery charging rate that resulted in a solar panel "pause" so we can report it.
 time_t pauseSolarStartTime; //Keep track of when we paused the solar panel so we can leave it off for a set time.
 time_t reportWatchdog = 0;  //Do we need to report a watchdog reset?
 time_t recentTime = 0;      //Set the current time periodically so we can use it in the Watchdog Interrupt
@@ -339,15 +340,16 @@ void enableEthernet() {
 
     // Count down the seconds on Serial. Character 8 is the backspace.
     Serial.write(8);
-    if (i > 8) {
+    if (i > 9) {
       Serial.write(8);
     }
-    Serial.print(i);
+    Serial.print(i - 1);
 
     wdt_reset();
     delay(1000);
   }
 
+  pinMode(SS, OUTPUT);
   pinMode(PIN_ETH_DISABLE, OUTPUT);                     // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_ENABLED);           // turns ETH shield on
   
@@ -359,10 +361,10 @@ void enableEthernet() {
 
     // Count down the seconds on Serial. Character 8 is the backspace.
     Serial.write(8);
-    if (i >= 9) {
+    if (i > 9) {
       Serial.write(8);
     }
-    Serial.print(i);
+    Serial.print(i - 1);
 
     wdt_reset();
     delay(1000);
@@ -370,7 +372,11 @@ void enableEthernet() {
   
   Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
   ethEnabled = true;
-  Serial.println("Ethernet Enabled.");
+
+  Serial.print(millis());
+  Serial.print(F("ms: Started Ethernet. Local IP is "));
+  Serial.println(Ethernet.localIP());
+
 
 }
 
@@ -474,8 +480,6 @@ ISR(WDT_vect)
  ***********************************************************/
 void setup()
 {
-    //Serial.begin(9600);
-    //Serial.begin(38400);
     Serial.begin(115200);
     Serial.println();
     Serial.println();
@@ -484,9 +488,6 @@ void setup()
 
     //Enable the WatchDog, 8 second timeout.
     wdt_enable(WDTO_8S);
-
-    //delay(300);
-
 
     if (EEPROM.read(eePowerSave) == 255) {
       Serial.println("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0).");
@@ -707,43 +708,10 @@ void setup()
       Serial.println();
     }
 
-    Serial.println();
-    Serial.println(F("Beginning Ethernet."));
-    Serial.println();
-
-    //**********************************
-    //***** Ethernet Stuff *************
-    //**********************************
-
-    pinMode(SS, OUTPUT);
-    // Ethernet is slow, let's delay a bit, then reset the watchdog often
-    delay(250);
-    wdt_reset();
-    wdt_disable();
-    Serial.print("Watchdog was reset and disabled at ");
-    Serial.print(millis());
-    Serial.println("ms for Ethernet");
-
-    // Ethernet static for testing, maybe permanent. DHCP method is commented out a few lines down.
-    Ethernet.begin(mac, ip, dnsServer, gateway, subnet);
-
-    // start the Ethernet connection:
-    /* if (Ethernet.begin(mac) == 0) {
-      Serial.println(F("Failed to configure Ethernet using DHCP"));
-      // try to congifure using IP address instead of DHCP:
-      Ethernet.begin(mac, ip, dnsServer, gateway, subnet);
-    } */
-    wdt_enable(WDTO_8S);
-
-    // give the Ethernet shield a second to initialize:
-    delay(1000);
-    Serial.print(millis());
-    Serial.print(F("ms: Started Ethernet (and watchdog enabled). Local IP is "));
-    Serial.println(Ethernet.localIP());
 
     // Request the date & time from RTC or NTP
     wdt_reset();
-    if (RTC.get()) {
+    if (RTC.get() > 1506693603) {
       // If we have a working RTC, let's just use it. Every few minutes we'll check for NTP too.
       Serial.println(F("RTC selected as time source."));
       Serial.println();
@@ -775,8 +743,8 @@ void setup()
     logFile = SD.open(filename, FILE_WRITE);
     NOSD */
 
-    //Print a header row.
-    Serial.println(F("time , date     ,w1avg,wmax,dir, tmp, hum, baro , dv ,rain,wnow, tmp, hum, 5v , 5v ,lght, uptime   , FreeMem  ,Raw Wdir, RTC time, Misc error messages"));
+    //Print a header row. Though it gets out of date (and inaccurate) often.
+    //Serial.println(F("time , date     ,w1avg,wmax,dir, tmp, hum, baro , dv ,rain,wnow, tmp, hum, 5v , 5v ,lght, uptime   , FreeMem  ,Raw Wdir, RTC time, Misc error messages"));
 //                    18:22,12/22/2016,02.16,13.1, -1,76.9,41.8,1009.6, 0.0,0.00,00.7,76.9,41.8,4.33,4.33,0.03,0.00:01:20,14532426,1928538
 //                    20:14,8/1/2017,00.00,00.0,-10,89.4,32.1,976.5,-0.01,-LR-,-LR-,89.4,32.1,3.95,38.14,0.07,0.07:57:55,5264,1023
 
@@ -1002,8 +970,11 @@ void loop()
         // Charging too fast. Poor man's slowdown: turn off the solar panel for a bit. 8-o
         Serial.println();
         Serial.print(getTimeWithZeros());
-        Serial.println(F(": Pausing Solar Panels because charge rate was > 700ma"));
+        Serial.print(F(": Pausing Solar Panels because charge rate"));
+        Serial.print(ina219b_current, 0);
+        Serial.println(F(" was > 700ma."));
         pauseSolar = true;
+        pauseSolarChargeCurrent = ina219b_current;
         pauseSolarStartTime = now();
         disableSolar();
 
@@ -1022,6 +993,7 @@ void loop()
             Serial.println();
             Serial.print(getTimeWithZeros());
             Serial.println(F(": RESUMING Solar Panels, it's been long enough with them turned off"));
+            pauseSolarChargeCurrent = 0;
             pauseSolar = false;
             enableSolar();
           }
@@ -1916,10 +1888,6 @@ String getWeatherString() {
   }
 
   // 21+: Assorted info and error values
-  // Tack on a ,R if we've rebooted to make it easier to spot them
-  if(justRestarted) {
-    weatherString += ",R";
-  }
 
   // add socket status as 8 hex chars
   bool reportSockets = false;
@@ -1932,6 +1900,12 @@ String getWeatherString() {
       if (ethSockStatus[i] < 17) weatherString += String("0");
       weatherString += String(ethSockStatus[i], 16);
     }
+  }
+
+  if (pauseSolarChargeCurrent) {
+    weatherString += String(charComma);
+    weatherString += String("S-");
+    weatherString += String(pauseSolarChargeCurrent, 0);
   }
 
   // If there have been failures, tack them on:
@@ -1958,6 +1932,11 @@ String getWeatherString() {
     weatherString += String(hour(reportWatchdog));
     weatherString += String((":"));
     weatherString += String(minute(reportWatchdog));
+  }
+
+  // Tack on a ,R if we've rebooted to make it easier to spot them
+  if(justRestarted) {
+    weatherString += ",R";
   }
 
   weatherString.replace(" ", "");
