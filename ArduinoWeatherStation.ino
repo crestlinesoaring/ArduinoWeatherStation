@@ -8,7 +8,7 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "L16eB1"; // jjj
+const String wxVersion = "L17cB1";
 const String wxOwner = "-DJ-";
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
@@ -16,7 +16,7 @@ const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver L16eB1 2017/09/27 more smoothing, text fixing) starting at ms ";
+const String startupMessage = "UM Weather Station (ver L17cB1 2017/09/29 fix enableEth loop, 5 min solar timeout) starting at ms ";
 //#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
@@ -42,13 +42,6 @@ const String startupMessage = "UM Weather Station (ver L16eB1 2017/09/27 more sm
 #define logOneLine( line) Serial.println(line);
 #define logOneLine2( line, base) Serial.println(line,base);
 #define logSome( line) Serial.print(line);
-
-// Redefine INA219 sample & average so we don't have to modify the header. This is probably poor coding practice. I'm sorry.
-// First line is original and is used to initialize the INA219. 2nd line is what we're copying. 3rd line makes it happen. Note 0x0078 in 3rd line.
-#define INA219_CONFIG_SADCRES_12BIT_1S_532US   (0x0018)  // 1 x 12-bit shunt sample
-#define INA219_CONFIG_SADCRES_12BIT_128S_69MS  (0x0078)  // 128 x 12-bit shunt samples averaged together
-//#undef  INA219_CONFIG_SADCRES_12BIT_1S_532US
-//#define INA219_CONFIG_SADCRES_12BIT_1S_532US   (0x0078)  // REDEFINE the 1 sample to really be 128 samples so we don't have to modify Adafruit_INA219.h
 
 
 Adafruit_INA219 ina219a(ina219a_HWaddr);     // First  ina219 sensor: A
@@ -126,6 +119,7 @@ byte sunriseDay = 0;        //Day we last calculated sunrise/sunset for. If it's
 bool justBooted = true;     //Some stuff settles after the first minute, so let's keep track of that.
 bool justRestarted = true;  //Print an R at the end of the first upload attempt to make it easy to see a reboot.
 bool powerSave = false;     //Set a flag when we're in power save mode. Do some stuff different.
+bool ethEnabled = false;    //Set once Eth is enabled because enabling incurs a 30 second pause that we don't want to repeat.
 bool pauseSolar = false;    //We need to charge pausing when it gets hot or if charging too fast. It == battery, box, outside, etc...
 byte pauseSolarMinutes = 5; //How long to leave solar off when we turn it off.
 time_t pauseSolarStartTime; //Keep track of when we paused the solar panel so we can leave it off for a set time.
@@ -328,18 +322,24 @@ EthernetUDP Udp;
 
 // Turns on power for components needed for network connectivity
 void enableEthernet() {
+
+  // DON'T KEEP ENABLING ONCE IT'S ALREADY ENABLED! It's wasteful. Also it makes an endless loop if the 30 seconds crosses the "second zero" boundary.
+  if (ethEnabled) return;
+  
+  Serial.println();
+  Serial.print(getTimeWithZeros());
+  Serial.print(": enableEthernet() called. Ubiquiti startup delay, 25 seconds:    ");
+
   pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                 // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_ENABLED);  // turns Ubiquiti on
 
   // Ubiquiti takes 30 seconds to turn on and Ethernet takes 5; try to make them ready at the same time
   // This a poor way to accomplish this task; better would be to ping
-  Serial.println();
-  Serial.print("Ubiquiti startup delay, 25 seconds:    ");
   for (int i=25; i>0; i--) {
 
     // Count down the seconds on Serial. Character 8 is the backspace.
     Serial.write(8);
-    if (i > 9) {
+    if (i > 8) {
       Serial.write(8);
     }
     Serial.print(i);
@@ -354,12 +354,12 @@ void enableEthernet() {
   // ETH takes 5 seconds to be ready to send when turned on
   // This a poor way to accomplish this task; better would be to ping
   Serial.println();
-  Serial.print("Ethernet startup delay, 5 more seconds:    ");
+  Serial.print(": Eth startup delay, 5 more seconds:    ");
   for (int i=5; i>0; i--) {
 
     // Count down the seconds on Serial. Character 8 is the backspace.
     Serial.write(8);
-    if (i > 9) {
+    if (i >= 9) {
       Serial.write(8);
     }
     Serial.print(i);
@@ -369,11 +369,17 @@ void enableEthernet() {
   }
   
   Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
+  ethEnabled = true;
+  Serial.println("Ethernet Enabled.");
 
 }
 
 // Turns off power for network components to save power
 void disableEthernet() {
+  Serial.println();
+  Serial.print(getTimeWithZeros());
+  Serial.println(": disableEthernet() called. Shutting everything down.");
+
   pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                  // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_DISABLED);  // turns Ubiquiti off
 
@@ -386,6 +392,7 @@ void disableEthernet() {
 
   pinMode(PIN_ETH_DISABLE, OUTPUT);                      // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_DISABLED);           // turns ETH shield off
+  ethEnabled = false;
 }
 
 //**************************************
@@ -471,6 +478,7 @@ void setup()
     //Serial.begin(38400);
     Serial.begin(115200);
     Serial.println();
+    Serial.println();
     Serial.print(startupMessage);
     Serial.println(millis());
 
@@ -492,13 +500,13 @@ void setup()
     // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
     Serial.print("Reading EEPROM to see power save state: ");
     if (EEPROM.read(eePowerSave)) {
-      Serial.print("Shutting off Eth and Ubiquiti... ");
+      Serial.print("Power Save. Shutting off Eth and Ubiquiti... ");
       powerSave = true;
 
       disableEthernet();
 
     } else {
-      Serial.print("Turning on Eth and Ubiquiti... ");
+      Serial.print("No power save. Turning on Eth and Ubiquiti... ");
       powerSave = false;
 
       enableEthernet();
@@ -508,6 +516,7 @@ void setup()
  
     }
     Serial.println("Done.");
+    Serial.println();
 
 
     //Weather Station stuff
@@ -737,6 +746,7 @@ void setup()
     if (RTC.get()) {
       // If we have a working RTC, let's just use it. Every few minutes we'll check for NTP too.
       Serial.println(F("RTC selected as time source."));
+      Serial.println();
       setSyncProvider(RTC.get);
       setSyncInterval(300);           // Update system time often because it actually slews pretty fast; 4 second an hour is typical.
     } else {
@@ -941,16 +951,17 @@ void loop()
       int minutesToday = hour() * 60 + minute();
 
 #ifdef FOURMINUTEDAY
+      Serial.println("   !!DEBUG: Cycling to NIGHT every SIX minutes because of ""#define FOURMINUTEDAY""");
       if ( (minute() / 6) % 2 ) {
-        Serial.println("   !!DEBUG: Cycling to NIGHT every FOUR minutes because of ""#define FOURMINUTEDAY""");
+        Serial.println("The time of day is: ");
 
 #else
-      Serial.print("Minute of day is: ");
-      Serial.print(minutesToday);
-      if ( (minutesToday < sunrise) or (minutesToday > sunset - 60) ) {
+      Serial.print("The time of day is: ");
+      Serial.print(hour()); Serial.print(":"); Serial.print(minute());
+      if ( (minutesToday < sunrise - 15) or (minutesToday > sunset - 15) ) {
 
-        Serial.print(", which is Night time. We will switch to day at minute #");
-        Serial.println(sunrise);     // jjj removed 60 to save even more     Serial.println(sunrise - 60); 
+        Serial.print(", which is Night time. We will switch to daytime at ");
+        Serial.print((sunrise - 15) / 60); Serial.print(":"); Serial.println((sunrise - 15) % 60);
 #endif
         // We're not between "half an hour before sunrise" and sunset, so turn stuff off.
         // First set variables and record in eeprom that we're in power save mode.
@@ -962,27 +973,20 @@ void loop()
         disableEthernet();
 
       } else {
-        Serial.print(", which is Day time. We will switch to night at minute #");
-        Serial.println(sunset - 60);
+        Serial.print(", which is Day time. We will switch to night at ");
+        Serial.print((sunset - 15) / 60); Serial.print(":"); Serial.println((sunset - 15) % 60);
         // Otherwise, make sure things are TURNED ON
         if (powerSave) {
           powerSave = false;
           if (EEPROM.read(eePowerSave)) EEPROM.update(eePowerSave, false);
         
           //if powerSave was set, that means we're transitioning to daytime now.
-          // Until I figure out how to restart the Ethernet, just force a watchdog timeout with delays.
           enableEthernet();
 
-          /* No longer needed?
-          Serial.println(F("   ! ! !   We just switched to DAY. Since we can't reset ETHERNET very well, we are rebooting soon!!! ! ! "));
-          delay(10000);
-          delay(20000);
-          delay(30000);
-          */
         }
        
-        //This below kind of doesn't count, because of the reboot above. We really should never get here.
-        enableEthernet();
+        //Really only need to enable it once. The constant enabling was causing problems.
+        //enableEthernet();
 
       } // End of night/day figuring out (for power save)
 
@@ -997,8 +1001,8 @@ void loop()
 
         // Charging too fast. Poor man's slowdown: turn off the solar panel for a bit. 8-o
         Serial.println();
-        Serial.print(hour()); Serial.print(":"); Serial.print(minute()); Serial.print(":"); Serial.print(second());
-        Serial.println(F(": Pausing Solar Panels because charge rate was > 350ma (==700ma because INA reports half real value)"));
+        Serial.print(getTimeWithZeros());
+        Serial.println(F(": Pausing Solar Panels because charge rate was > 700ma"));
         pauseSolar = true;
         pauseSolarStartTime = now();
         disableSolar();
@@ -1007,10 +1011,16 @@ void loop()
 
         // If we're currently on a pause, let's see if we should enable charging again.
         if (pauseSolar) {
-          if ( (pauseSolarStartTime + pauseSolarMinutes * 60) > now() ) {
+          Serial.print(F(" Solar is paused, seconds left: "));
+          Serial.print(pauseSolarStartTime + pauseSolarMinutes * 60);
+          Serial.print(" - ");
+          Serial.print(now());
+          Serial.print(" = ");
+          Serial.println((pauseSolarStartTime + pauseSolarMinutes * 60) - now());
+          if ( (pauseSolarStartTime + pauseSolarMinutes * 60) <= now() ) {
             //It's been enough minutes with the Panels off. Turn them back on.
             Serial.println();
-            Serial.print(hour()); Serial.print(":"); Serial.print(minute()); Serial.print(":"); Serial.print(second());
+            Serial.print(getTimeWithZeros());
             Serial.println(F(": RESUMING Solar Panels, it's been long enough with them turned off"));
             pauseSolar = false;
             enableSolar();
@@ -1038,7 +1048,7 @@ void loop()
       }
       if ((second() == 25) and (minutes == 55)) {
         //refresh DHCP once an hour if we're using it. NTP/RTC second() so we don't do it same time as an upload. Runtime minutes so it's after an hour of running.
-        Ethernet.maintain();
+        //Ethernet.maintain();
       }
     }
 
@@ -1193,7 +1203,7 @@ From: http://forum.arduino.cc/index.php?topic=66426.15
 // Turns on solar panels, allows battery charging and solar powering of peripherals.
 // NOTE if this is disabled, everything runs on battery power, even in daytime.
 void enableSolar() {
-  Serial.print(hour()); Serial.print(":"); Serial.print(minute()); Serial.print(":"); Serial.print(second());
+  Serial.print(getTimeWithZeros());
   Serial.println(" - Solar panel ENABLED via enableSolar();");
   pinMode(PIN_SOLAR_DISABLE, INPUT);                 // prepares Solar Panel control pin
   //digitalWrite(PIN_SOLAR_DISABLE, SOLAR_ENABLED);     // turns Solar Panel on
@@ -1202,10 +1212,36 @@ void enableSolar() {
 
 // Turns off solar panels. Use this carefully, it makes everything battery powered.
 void disableSolar() {
-  Serial.print(hour()); Serial.print(":"); Serial.print(minute()); Serial.print(":"); Serial.print(second());
+  Serial.print(getTimeWithZeros());
   Serial.println(" - Solar panel DISABLED via disableSolar();");
   pinMode(PIN_SOLAR_DISABLE, OUTPUT);                  // prepares Solar Panel control pin
   digitalWrite(PIN_SOLAR_DISABLE, SOLAR_DISABLED);     // turns Solar Panel off
+
+}
+
+void handleSerial() {
+  // If there's serial data waiting, process it here.
+  while (Serial.available()) {
+
+    char c = Serial.read();
+    
+  }
+}
+
+String getTimeWithZeros() {
+
+    String S;
+    
+    if(hour() < 10) S += "0";
+    S += String(hour());
+    S += ":";
+    if(minute() < 10) S += "0";
+    S += String(minute());
+    S += ":";
+    if(second() < 10) S += "0";
+    S += String(second());
+
+    return S;
 
 }
 
@@ -1650,7 +1686,9 @@ byte uploadWeather()
     // Make an HTTP request:
     //logSome(strPut);
     //client.print(strPut);  //Single print so hopefully it goes out in one packet.
-    Serial.write(charPut, strPutLength); //for debugging
+    if (enableEthDump2Serial) {
+      Serial.write(charPut, strPutLength); //for debugging
+    }
     client.write(charPut, strPutLength); //Better chance of a single packet by using a char[].
     ethLastMillis = millis();
     uploadStatus = 0;
@@ -1922,7 +1960,6 @@ String getWeatherString() {
     weatherString += String(minute(reportWatchdog));
   }
 
-  //Serial.println(weatherString);
   weatherString.replace(" ", "");
   return weatherString;
 }
