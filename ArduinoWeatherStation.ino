@@ -8,15 +8,15 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "L17eB2";
-const String wxOwner = "-LR-";
+const String wxVersion = "L18cB1";
+const String wxOwner = "-WX-";
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
 const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
-const bool enableEthDump2Serial = true;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver L17eB2 2017/09/30 add solar pause reporting) starting at ms ";
+const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
+const String startupMessage = "UM Weather Station (ver L18cB1 2017/09/30 Solar Panel 1/1 minute) starting at ms ";
 //#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
@@ -121,9 +121,11 @@ bool justRestarted = true;  //Print an R at the end of the first upload attempt 
 bool powerSave = false;     //Set a flag when we're in power save mode. Do some stuff different.
 bool ethEnabled = false;    //Set once Eth is enabled because enabling incurs a 30 second pause that we don't want to repeat.
 bool pauseSolar = false;    //We need to charge pausing when it gets hot or if charging too fast. It == battery, box, outside, etc...
-byte pauseSolarMinutes = 5; //How long to leave solar off when we turn it off.
+byte pauseSolarMinutes = 2; //How long to leave solar off when we turn it off.
+byte resumeSolarMinutes = 3;//How long to leave solar ON even if charge rate is high.
 float pauseSolarChargeCurrent;  //Store the battery charging rate that resulted in a solar panel "pause" so we can report it.
 time_t pauseSolarStartTime; //Keep track of when we paused the solar panel so we can leave it off for a set time.
+time_t resumeSolarStartTime;//Similarly, what time we resumed so we don't cut it off too fast.
 time_t reportWatchdog = 0;  //Do we need to report a watchdog reset?
 time_t recentTime = 0;      //Set the current time periodically so we can use it in the Watchdog Interrupt
 time_t lastCrashTime = 0;
@@ -278,12 +280,16 @@ IPAddress ip(192, 168, IPq3, 222);
 IPAddress dnsServer(8, 8, 8, 8);
 IPAddress gateway(192, 168, IPq3, IPgw);  // Must be 254 for Marshall, set at TOP of sketch since we need to check/change often.
 IPAddress subnet(255, 255, 255, 0);
+EthernetClient client;          // For outgoing connections, uploading to the CSS webserver
+EthernetClient incomingClient;  // For incoming connections. Initially this is just to prompt a reboot for new code upload.
+EthernetServer server(23537);
+EthernetUDP Udp;
 
 // if you don't want to use DNS (and reduce your sketch size)
 // use the numeric IP instead of the name for the server:
 //IPAddress server(74,125,232,128);    // numeric IP for Google (no DNS)
 //char server[] = "www.google.com";    // name address for Google (using DNS)
-char server[] = "www.crestlinesoaring.org"; // Web server to connect to.
+char CSSserver[] = "www.crestlinesoaring.org"; // Web server to connect to.
 // [MarshallProprietary]
 
 // Some debugging and record keeping variables
@@ -315,12 +321,6 @@ char timeServer[] = "us.pool.ntp.org";
 unsigned long msNTPrequest;          // miliseconds at which NTP request was made (so we can see how long it took)
 
 
-// Initialize the Ethernet client library
-// with the IP address and port of the server
-// that you want to connect to (port 80 is default for HTTP):
-EthernetClient client;
-EthernetUDP Udp;
-
 // Turns on power for components needed for network connectivity
 void enableEthernet() {
 
@@ -343,6 +343,9 @@ void enableEthernet() {
     if (i > 9) {
       Serial.write(8);
     }
+    if (i == 10) {
+      Serial.write("0");
+    }
     Serial.print(i - 1);
 
     wdt_reset();
@@ -356,7 +359,8 @@ void enableEthernet() {
   // ETH takes 5 seconds to be ready to send when turned on
   // This a poor way to accomplish this task; better would be to ping
   Serial.println();
-  Serial.print(": Eth startup delay, 5 more seconds:    ");
+  Serial.print(getTimeWithZeros());
+  Serial.print(": Eth startup delay, 5 more seconds:  0");
   for (int i=5; i>0; i--) {
 
     // Count down the seconds on Serial. Character 8 is the backspace.
@@ -369,8 +373,10 @@ void enableEthernet() {
     wdt_reset();
     delay(1000);
   }
+  Serial.println();
   
   Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
+  server.begin();
   ethEnabled = true;
 
   Serial.print(millis());
@@ -384,7 +390,9 @@ void enableEthernet() {
 void disableEthernet() {
   Serial.println();
   Serial.print(getTimeWithZeros());
-  Serial.println(": disableEthernet() called. Shutting everything down.");
+  Serial.println(F(": disableEthernet() called. Shutting everything down."));
+  incomingClient.stop();
+  client.stop();
 
   pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                  // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_DISABLED);  // turns Ubiquiti off
@@ -490,7 +498,7 @@ void setup()
     wdt_enable(WDTO_8S);
 
     if (EEPROM.read(eePowerSave) == 255) {
-      Serial.println("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0).");
+      Serial.println(F("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0)."));
       EEPROM.update(eePowerSave, false);
     }
 
@@ -499,15 +507,15 @@ void setup()
     pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
     
     // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
-    Serial.print("Reading EEPROM to see power save state: ");
+    Serial.print(F("Reading EEPROM to see power save state: "));
     if (EEPROM.read(eePowerSave)) {
-      Serial.print("Power Save. Shutting off Eth and Ubiquiti... ");
+      Serial.print(F("Power Save. Shutting off Eth and Ubiquiti... "));
       powerSave = true;
 
       disableEthernet();
 
     } else {
-      Serial.print("No power save. Turning on Eth and Ubiquiti... ");
+      Serial.print(F("No power save. Turning on Eth and Ubiquiti... "));
       powerSave = false;
 
       enableEthernet();
@@ -764,7 +772,50 @@ void setup()
 
 
 void loop()
-{  
+{
+  //First check for incoming Ethernet connections. So far, this is only "connecing to reset". Not much happens.
+  if (!powerSave) {
+    msTemp = millis();
+    incomingClient = server.available();
+    if (incomingClient) {
+      Serial.println(F("  --=Ethernet client connected!!=-- "));
+      Serial.println(F("    -= Going down for reboot =-  "));
+      // Probably just waiting here is enough to cause a WatchDog reset, which is all we really need.
+      while (incomingClient.connected()) {
+        //Serial.print(F("Entering While incomingClient.connected() at ms: "));
+        //Serial.println(millis());
+        if (incomingClient.available()) {
+          char c = incomingClient.read();
+          Serial.write(c);
+          incomingClient.print(c);
+          if (c == 'R') {
+            wdt_reset();
+            Serial.println(F("---===---===--- Client hit R and [enter], which causes the reboot ---===---===---"));
+            incomingClient.println(F("R and Enter detected. Rebooting and disconnecting."));
+            delay(100);
+            Serial.println(); Serial.print(" ");
+            int i = 0;
+            while(true) { // this will surely cause a reboot.
+              Serial.print(8);
+              Serial.print(i);
+              incomingClient.print(" ");
+              incomingClient.print(i);
+              i++;
+            }
+            break;
+          }
+        }
+      }
+      delay(5);
+      incomingClient.stop();
+      Serial.println();
+      Serial.print(F("Incoming client disconnected after "));
+      Serial.print(millis() - msTemp);
+      Serial.println("ms.");
+    }
+  }
+
+  
   //Do "once a second stuff", mostly weather. Also keep track of which minute it is.
   if(millis() - lastSecond >= 1000)
   {
@@ -919,16 +970,16 @@ void loop()
       int minutesToday = hour() * 60 + minute();
 
 #ifdef FOURMINUTEDAY
-      Serial.println("   !!DEBUG: Cycling to NIGHT every SIX minutes because of ""#define FOURMINUTEDAY""");
+      Serial.println(F("   !!DEBUG: Cycling to NIGHT every SIX minutes because of ""#define FOURMINUTEDAY"""));
       if ( (minute() / 6) % 2 ) {
-        Serial.println("The time of day is: ");
+        Serial.println(F("The time of day is: "));
 
 #else
-      Serial.print("The time of day is: ");
+      Serial.print(F("The time of day is: "));
       Serial.print(hour()); Serial.print(":"); Serial.print(minute());
       if ( (minutesToday < sunrise - 15) or (minutesToday > sunset - 15) ) {
 
-        Serial.print(", which is Night time. We will switch to daytime at ");
+        Serial.print(F(", which is Night time. We will switch to daytime at "));
         Serial.print((sunrise - 15) / 60); Serial.print(":"); Serial.println((sunrise - 15) % 60);
 #endif
         // We're not between "half an hour before sunrise" and sunset, so turn stuff off.
@@ -941,7 +992,7 @@ void loop()
         disableEthernet();
 
       } else {
-        Serial.print(", which is Day time. We will switch to night at ");
+        Serial.print(F(", which is Day time. We will switch to night at "));
         Serial.print((sunset - 15) / 60); Serial.print(":"); Serial.println((sunset - 15) % 60);
         // Otherwise, make sure things are TURNED ON
         if (powerSave) {
@@ -965,14 +1016,15 @@ void loop()
       *  B A T T E R Y   P R O T E C T I O N
       * * * * * * * * * * * * * * * * * * * * * * * * */
 
-      if (ina219b_current > 700) {
+      //If the charge rate is too high, cut it off. Unless we just resumed.. then let it soak up a little sun first.
+      if ((ina219b_current > 2000) and ( (resumeSolarStartTime + resumeSolarMinutes * 60) <= now() )) {
 
         // Charging too fast. Poor man's slowdown: turn off the solar panel for a bit. 8-o
         Serial.println();
         Serial.print(getTimeWithZeros());
-        Serial.print(F(": Pausing Solar Panels because charge rate"));
+        Serial.print(F(": Pausing Solar Panels because charge rate "));
         Serial.print(ina219b_current, 0);
-        Serial.println(F(" was > 700ma."));
+        Serial.println(F(" was > 1000mA."));
         pauseSolar = true;
         pauseSolarChargeCurrent = ina219b_current;
         pauseSolarStartTime = now();
@@ -989,13 +1041,14 @@ void loop()
           Serial.print(" = ");
           Serial.println((pauseSolarStartTime + pauseSolarMinutes * 60) - now());
           if ( (pauseSolarStartTime + pauseSolarMinutes * 60) <= now() ) {
-            //It's been enough minutes with the Panels off. Turn them back on.
+            //It's been enough time with the Panels off. Turn them back on.
             Serial.println();
             Serial.print(getTimeWithZeros());
             Serial.println(F(": RESUMING Solar Panels, it's been long enough with them turned off"));
             pauseSolarChargeCurrent = 0;
             pauseSolar = false;
             enableSolar();
+            resumeSolarStartTime = now();
           }
         }
       } // END of charging-too-fast check
@@ -1089,8 +1142,9 @@ void loop()
   //INA 219 averaging. Gets about 60-70 readings a second at time of writing.
   if (ina219a_MMAmillis + 8 < millis()) {
   
-    shuntvoltage = ina219a.getShuntVoltage_mV();
-    busvoltage = ina219a.getBusVoltage_V();
+    // * -1 because this one's wired backwards for convenience.
+    shuntvoltage = -1.0 * ina219a.getShuntVoltage_mV();
+    busvoltage = -1.0 * ina219a.getBusVoltage_V();
     ina219_MMAtemp = busvoltage + (shuntvoltage / 1000.0);
 
     ina219a_MMAvoltSum -= ina219a_MMAvoltAvg;
@@ -1102,7 +1156,7 @@ void loop()
     ina219a_MMAcurrentSum -= ina219a_MMAcurrentAvg;
     ina219a_MMAcurrentSum += ina219_MMAtemp;
     ina219a_MMAcurrentAvg  = ina219a_MMAcurrentSum / ina219a_MMAcount;
-    ina219a_current = ina219a_MMAcurrentAvg * -2.0; // * -2.0 because a resistor was added and this one's wired backwards for convenience.
+    ina219a_current = ina219a_MMAcurrentAvg * 2.0; // * 2.0 because a resistor was added.
 
     ina219a_MMAloops++;
 
@@ -1123,7 +1177,6 @@ void loop()
       ina219b_MMAcurrentSum += ina219_MMAtemp;
       ina219b_MMAcurrentAvg  = ina219b_MMAcurrentSum / ina219b_MMAcount;
       ina219b_current = ina219b_MMAcurrentAvg * 2.0; // double because a resistor was added
-
       
     }
 
@@ -1148,9 +1201,9 @@ void getRiseSet()
   }
   sunriseDay = day();
   Serial.println();
-  Serial.print("Sunrise today is at  "); Serial.print(sunrise / 60); Serial.print(":"); Serial.println(sunrise % 60);
-  Serial.print("Sunset  today is at " ); Serial.print(sunset  / 60); Serial.print(":"); Serial.println(sunset  % 60);
-  Serial.print("  Took "); Serial.print(micros() - usTemp);  Serial.println("us to calculate.");
+  Serial.print(F("Sunrise today is at  ")); Serial.print(sunrise / 60); Serial.print(":"); Serial.println(sunrise % 60);
+  Serial.print(F("Sunset  today is at " )); Serial.print(sunset  / 60); Serial.print(":"); Serial.println(sunset  % 60);
+  Serial.print(F("  Took ")); Serial.print(micros() - usTemp);  Serial.println(F("us to calculate."));
   Serial.println();
 }
 
@@ -1647,7 +1700,7 @@ byte uploadWeather()
 
   client.setTimeout(600);
   int clientConnectStatus;
-  clientConnectStatus = client.connect(server, 80);
+  clientConnectStatus = client.connect(CSSserver, 80);
   if (clientConnectStatus) {
     logSome(F("Ether client connected for uploadWeather. Mem: "));
     logSome(freeRam());
@@ -1797,9 +1850,9 @@ String getWeatherString() {
     weatherString += String(ina219a_current * -1, 0);
   } else {
     //positive numbers
-    if (ina219a_current < 1000) weatherString += "0";
-    if (ina219a_current < 100)  weatherString += "0";
-    if (ina219a_current < 10)   weatherString += "0";
+    if (ina219a_current < 999.5) weatherString += "0";
+    if (ina219a_current < 99.5)  weatherString += "0";
+    if (ina219a_current < 9.5)   weatherString += "0";
     weatherString += String(ina219a_current, 0);
   }
   //weatherString += String("mA");
@@ -1826,9 +1879,9 @@ String getWeatherString() {
     weatherString += String(ina219b_current * -1, 0);
   } else {
     //positive numbers
-    if (ina219b_current < 1000) weatherString += "0";
-    if (ina219b_current < 100)  weatherString += "0";
-    if (ina219b_current < 10)   weatherString += "0";
+    if (ina219b_current < 999.5) weatherString += "0";
+    if (ina219b_current < 99.5)  weatherString += "0";
+    if (ina219b_current < 9.5)   weatherString += "0";
     weatherString += String(ina219b_current, 0);
   }
   //weatherString += String("mA");
@@ -1892,7 +1945,7 @@ String getWeatherString() {
   // add socket status as 8 hex chars
   bool reportSockets = false;
   for (int i = 0; i < MAX_SOCK_NUM; i++) {
-    if (ethSockStatus[i] > 0) reportSockets = true;
+    if ((ethSockStatus[i] > 0) and (ethSockStatus[i] != 0x14)) reportSockets = true;  // 0x14 == listen. We know one is listening always.
   }
   if (reportSockets) {
     weatherString += String(charComma);
