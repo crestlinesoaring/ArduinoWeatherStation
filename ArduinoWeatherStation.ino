@@ -8,15 +8,15 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "L18cB1";
-const String wxOwner = "-WX-";
+const String wxVersion = "18h";
+const String wxOwner = "M";
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
 const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver L18cB1 2017/09/30 Solar Panel 1/1 minute) starting at ms ";
+const String startupMessage = "UM Weather Station (ver 18h 2017/10/15) starting at ms ";
 //#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
@@ -211,7 +211,7 @@ float ina219a_MMAcurrentSum;
 float ina219a_MMAcurrentAvg;
 float ina219a_MMAvoltSum;
 float ina219a_MMAvoltAvg;
-const int ina219a_MMAcount = 2048;
+const int ina219a_MMAcount = 1024;
 
 float ina219b_volts;
 float ina219b_current;
@@ -219,7 +219,7 @@ float ina219b_MMAcurrentSum;
 float ina219b_MMAcurrentAvg;
 float ina219b_MMAvoltSum;
 float ina219b_MMAvoltAvg;
-const int ina219b_MMAcount = 128;
+const int ina219b_MMAcount = 1024;
 
 float shuntvoltage = 0;
 float busvoltage = 0;
@@ -240,23 +240,22 @@ volatile unsigned long raintime, rainlast, raininterval, rain;
 //****************************
 
 // 10 bytes so far, that's 2,400 bytes to store 4 hours. Not bad?
+//4=16,5=32,6=64,7=128
 struct wxCache_struct {
-  byte wd : 6;      //Wind direction / 6 (remember to multiply)
+  byte wd : 4;      //Wind direction / 22.5 (remember to multiply)
   byte ws : 6;      //Wind speed
   byte gust : 4;    //Wind gust = gust * 2 + wind speed!!
   byte temp1;   // in F
   byte hum1;    
   byte pres1;   //Pressure in hPa minus 900
   byte temp2;
-  byte volt1;   //Voltage * 10 (remember to divide by 10)
-  byte amp1;    //Milliamps / 10 (remember to multiply by 10)
-  byte volt2;
-  byte amp2;
+  byte volt2;   //Voltage * 10 (remember to divide by 10)
+  byte amp2;    //Milliamps / 10 (remember to multiply by 10)
 };
 
 time_t wxCache_time;
 byte wxCache_count;
-#define WX_CACHE_MAX 240
+#define WX_CACHE_MAX 60
 
 wxCache_struct wxCache[WX_CACHE_MAX];
 //2,028 used or 6,164 free without storage
@@ -795,7 +794,7 @@ void loop()
             delay(100);
             Serial.println(); Serial.print(" ");
             int i = 0;
-            while(true) { // this will surely cause a reboot.
+            while(true) { // this would surely cause a reboot, except we never seem to get here.
               Serial.print(8);
               Serial.print(i);
               incomingClient.print(" ");
@@ -977,10 +976,10 @@ void loop()
 #else
       Serial.print(F("The time of day is: "));
       Serial.print(hour()); Serial.print(":"); Serial.print(minute());
-      if ( (minutesToday < sunrise - 15) or (minutesToday > sunset - 15) ) {
+      if ( (minutesToday < sunrise - 60) or (minutesToday > sunset - 15) ) {
 
         Serial.print(F(", which is Night time. We will switch to daytime at "));
-        Serial.print((sunrise - 15) / 60); Serial.print(":"); Serial.println((sunrise - 15) % 60);
+        Serial.print((sunrise - 60) / 60); Serial.print(":"); Serial.println((sunrise - 60) % 60);
 #endif
         // We're not between "half an hour before sunrise" and sunset, so turn stuff off.
         // First set variables and record in eeprom that we're in power save mode.
@@ -1139,20 +1138,27 @@ void loop()
   } //END if(!ethStopped)
 
 
-  //INA 219 averaging. Gets about 60-70 readings a second at time of writing.
-  if (ina219a_MMAmillis + 8 < millis()) {
+  //INA 219 averaging. Gets about 60-70 readings a second at time of writing using a Modified Moving Average.
+  if (ina219a_MMAmillis + 12 < millis()) {
+
+    float ina219a_polarity = 1.0;
   
     // * -1 because this one's wired backwards for convenience.
-    shuntvoltage = -1.0 * ina219a.getShuntVoltage_mV();
-    busvoltage = -1.0 * ina219a.getBusVoltage_V();
+    shuntvoltage = ina219a.getShuntVoltage_mV();
+    busvoltage = ina219a.getBusVoltage_V();
     ina219_MMAtemp = busvoltage + (shuntvoltage / 1000.0);
+    // flip the reported polarity if needed, one of the brain boxes is wired backwards.
+    if (ina219_MMAtemp < 0.0) {
+      ina219_MMAtemp = ina219_MMAtemp * -1.0;
+      ina219a_polarity = -1.0;
+    }
 
     ina219a_MMAvoltSum -= ina219a_MMAvoltAvg;
     ina219a_MMAvoltSum += ina219_MMAtemp;
     ina219a_MMAvoltAvg  = ina219a_MMAvoltSum / ina219a_MMAcount;
     ina219a_volts = ina219a_MMAvoltAvg;
 
-    ina219_MMAtemp = ina219a.getCurrent_mA();  
+    ina219_MMAtemp = ina219a.getCurrent_mA() * ina219a_polarity;  
     ina219a_MMAcurrentSum -= ina219a_MMAcurrentAvg;
     ina219a_MMAcurrentSum += ina219_MMAtemp;
     ina219a_MMAcurrentAvg  = ina219a_MMAcurrentSum / ina219a_MMAcount;
@@ -1160,25 +1166,22 @@ void loop()
 
     ina219a_MMAloops++;
 
-    if (ina219a_MMAloops % 10 == 0) {
-      //Smooth the battery's INA 1/10th as often as the Panel, since the battery doesn't get as buffeted by PWM
+    //Battery's INA219. Battery absorbs most of the PWM but amperage still fluctuates so dampen this heavily too.
 
-      shuntvoltage = ina219b.getShuntVoltage_mV();
-      busvoltage = ina219b.getBusVoltage_V();
-      ina219_MMAtemp = busvoltage + (shuntvoltage / 1000.0);
-  
-      ina219b_MMAvoltSum -= ina219b_MMAvoltAvg;
-      ina219b_MMAvoltSum += ina219_MMAtemp;
-      ina219b_MMAvoltAvg  = ina219b_MMAvoltSum / ina219b_MMAcount;
-      ina219b_volts = ina219b_MMAvoltAvg;
-  
-      ina219_MMAtemp = ina219b.getCurrent_mA();  
-      ina219b_MMAcurrentSum -= ina219b_MMAcurrentAvg;
-      ina219b_MMAcurrentSum += ina219_MMAtemp;
-      ina219b_MMAcurrentAvg  = ina219b_MMAcurrentSum / ina219b_MMAcount;
-      ina219b_current = ina219b_MMAcurrentAvg * 2.0; // double because a resistor was added
-      
-    }
+    shuntvoltage = ina219b.getShuntVoltage_mV();
+    busvoltage = ina219b.getBusVoltage_V();
+    ina219_MMAtemp = busvoltage + (shuntvoltage / 1000.0);
+
+    ina219b_MMAvoltSum -= ina219b_MMAvoltAvg;
+    ina219b_MMAvoltSum += ina219_MMAtemp;
+    ina219b_MMAvoltAvg  = ina219b_MMAvoltSum / ina219b_MMAcount;
+    ina219b_volts = ina219b_MMAvoltAvg;
+
+    ina219_MMAtemp = ina219b.getCurrent_mA();  
+    ina219b_MMAcurrentSum -= ina219b_MMAcurrentAvg;
+    ina219b_MMAcurrentSum += ina219_MMAtemp;
+    ina219b_MMAcurrentAvg  = ina219b_MMAcurrentSum / ina219b_MMAcount;
+    ina219b_current = ina219b_MMAcurrentAvg * 2.0; // double because a resistor was added
 
   }
 
@@ -1810,24 +1813,18 @@ String getWeatherString() {
   //weatherString += String((pressure - oldPressure) / 100.0, 2);
   weatherString += "0";
 
-  // 10: rain so far today
-  //weatherString += String(",rainin=");
-  //weatherString += String(rainin, 2);
+  // 10: Location string ("M" for Marshall, "L" for Lance, "D" for DJ
   weatherString += String(charComma);
-//    weatherString += String(0.0, 2);
   weatherString += String(wxOwner);
 
-  // 11: rain long term? Maybe it's supposed to be last 24h, but it's always zero.
-  //weatherString += String(",dailyrainin=");
-  //weatherString += String(dailyrainin, 2);
+  // 11: Version string.
   weatherString += String(charComma);
-//    weatherString += String(0.0, 2);
   weatherString += String(wxVersion);
 
   // 12: temperature in the enclosure or 2nd sensor if we get one. In Celcius for Jimmy.
   weatherString += String(charComma);
   if (tempc) {
-    weatherString += String(tempc / 4.0, 2); //Dja
+    weatherString += String(tempc / 4.0, 1);
   } else {
     weatherString += "0";
   }
@@ -1840,13 +1837,13 @@ String getWeatherString() {
   weatherString += String(charComma);
   weatherString += String(bme280b.readFloatHumidity(), 0);
 
-  // 15: Current on ina219 sensor A (Solar Panel / CC @ 12v maybe?)
+  // 15: Current on ina219 sensor A (Solar Panel)
   weatherString += String(charComma);
   if (ina219a_current < 0) {
     //negative numbers. There's a better way using dtostrf(), but that pads with spaces not zeros right? Can't have spaces.
     weatherString += String("-");
-    if (ina219a_current > -10)  weatherString += "0";
-    if (ina219a_current > -100) weatherString += "0";
+    if (ina219a_current > -9.5)  weatherString += "0";
+    if (ina219a_current > -99.5) weatherString += "0";
     weatherString += String(ina219a_current * -1, 0);
   } else {
     //positive numbers
@@ -1855,27 +1852,19 @@ String getWeatherString() {
     if (ina219a_current < 9.5)   weatherString += "0";
     weatherString += String(ina219a_current, 0);
   }
-  //weatherString += String("mA");
 
-  // 16: Voltage on ina219 sensor A (Solar Panel @ 12v maybe?)
+  // 16: Voltage on ina219 sensor A (Solar Panel)
   weatherString += String(charComma);
-  weatherString += String(ina219a_volts, 2);
-  //weatherString += String("v");
-  //weatherString += String(batt_lvl, 2);
-
-  // 17: Power on ina219 sensor A (watts battery)
-//  weatherString += String(charComma);
-//  weatherString += String(ina219a_volts * ina219a_current / 1000, 2);
-//  weatherString += String("w");
+  weatherString += String(ina219a_volts, 1);
 
 
-  // 17: Current on ina219 sensor B (after buck to 5v maybe?)
+  // 17: Current on ina219 sensor B (Battery)
   weatherString += String(charComma);
   if (ina219b_current < 0) {
     //negative numbers. There's a better way using dtostrf(), but that pads with spaces not zeros right? Can't have spaces.
     weatherString += String("-");
-    if (ina219b_current > -10)  weatherString += "0";
-    if (ina219b_current > -100) weatherString += "0";
+    if (ina219b_current > -9.5)  weatherString += "0";
+    if (ina219b_current > -99.5) weatherString += "0";
     weatherString += String(ina219b_current * -1, 0);
   } else {
     //positive numbers
@@ -1884,33 +1873,20 @@ String getWeatherString() {
     if (ina219b_current < 9.5)   weatherString += "0";
     weatherString += String(ina219b_current, 0);
   }
-  //weatherString += String("mA");
 
-  // 18: Voltage on ina219 sensor A (after buck to 5v maybe?)
+  // 18: Voltage on ina219 sensor B (Battery)
   weatherString += String(charComma);
   weatherString += String(ina219b_volts, 2);
   //weatherString += String("v");
   //weatherString += String(batt_lvl, 2);
-
-  // 18: Power on ina219 sensor A (watts battery)
-//  weatherString += String(charComma);
-//  weatherString += String(ina219b_volts * ina219b_current / 1000, 2);
-//  weatherString += String("w");
-
-
-
-  // 19: light level, referenced to voltage I think
-//  weatherString += String(charComma);
-//    weatherString += String(light_lvl, 2);
-//  weatherString += "0";
 
   // 19: run time in H:MM:SS
   weatherString += String(charComma);
   //weatherString += String(days);
   //weatherString += String(".");
   //if (hours < 10) weatherString += String('0');
-  weatherString += String(hours + (days * 24));
-  weatherString += String(":");
+  //weatherString += String(hours + (days * 24));
+  //weatherString += String(":");
   if (minutes < 10) weatherString += String('0');
   weatherString += String(minutes);
   weatherString += String(":");
@@ -1928,11 +1904,11 @@ String getWeatherString() {
 //    weatherString += String(charComma);
 //    weatherString += String(freeRam());
 
-  // 20: print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
+/*  // 20: print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
   if (true) {
     weatherString += String(charComma);
     weatherString += String(winddirRaw);
-  }
+  } */
   if (true) {
     weatherString += String(charComma);
     if (strWindDir.length() < 3) weatherString += String("_");
