@@ -8,7 +8,7 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "18h";
+const String wxVersion = "19a";
 const String wxOwner = "M";
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
@@ -16,7 +16,7 @@ const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 18h 2017/10/15) starting at ms ";
+const String startupMessage = "UM Weather Station (ver 19a 2017/10/25) starting at ms ";
 //#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
@@ -34,7 +34,7 @@ const String startupMessage = "UM Weather Station (ver 18h 2017/10/15) starting 
 #include "Adafruit_INA219.h"   // Voltage/Current sensor. https://github.com/adafruit/Adafruit_INA219
 #include "SparkFunBME280.h"    // High precision Temp & Humidity sensor. https://github.com/sparkfun/SparkFun_BME280_Arduino_Library
 
-#include "Marshall.h" // Site-specific parameters that cannot currently be published
+#include "Marshall.h"  // Site-specific parameters that cannot currently be published
 
 //#define logOneLine( line) logFile.println(line); Serial.println(line);
 //#define logOneLine2( line, base) logFile.println(line, base); Serial.println(line,base);
@@ -151,13 +151,13 @@ volatile byte windClicks = 0;
  * 11: rain long term?  (not used, set to -LR- for identification)
  * 12: Temperature in C from RTC
  * 13: Humidity, inside enclosure, currently same as #7
- * 13: voltage 1: battery
- * 14: current 1: battery
- * 15: voltage 2: 5v
- * 16: current 2: 5v
+ * 13: current 1: solar panel
+ * 14: voltage 1: solar panel
+ * 15: current 2: battery
+ * 16: voltage 2: battery
  * 17: light level (accurate, but probably zero inside enclosure)
  * 18: uptime in HH:MM:SS
- * 19: raw wind direction reading for calculating best binning values
+ * 19: Wind direction text (N, NNW, NW, WNW, W, etc)
  * 20: Status stuff: reboots, socket status, failures, etc...
  */
 
@@ -206,7 +206,7 @@ float light_lvl = 455;     // [analog value from 0 to 1023]
 
 //INA 219 volt & current sensor. MMA means Modified Moving Average. PWM charging requires some smoothing.
 float ina219a_volts;
-float ina219a_current;
+float ina219a_ma;
 float ina219a_MMAcurrentSum;
 float ina219a_MMAcurrentAvg;
 float ina219a_MMAvoltSum;
@@ -214,7 +214,7 @@ float ina219a_MMAvoltAvg;
 const int ina219a_MMAcount = 1024;
 
 float ina219b_volts;
-float ina219b_current;
+float ina219b_ma;
 float ina219b_MMAcurrentSum;
 float ina219b_MMAcurrentAvg;
 float ina219b_MMAvoltSum;
@@ -229,8 +229,6 @@ float ina219_MMAtemp;
 unsigned int ina219a_MMAmillis = 0;
 unsigned int ina219a_MMAloops = 0;
 
-
-
 // volatiles are subject to modification by IRQs
 volatile unsigned long raintime, rainlast, raininterval, rain;
 
@@ -239,28 +237,31 @@ volatile unsigned long raintime, rainlast, raininterval, rain;
 //***  Data Storage in RAM ***
 //****************************
 
-// 10 bytes so far, that's 2,400 bytes to store 4 hours. Not bad?
-//4=16,5=32,6=64,7=128
+// Structure to hold essential data for overnight storage or batched transmission during cloudy days.
+// 6 bytes so far, with 3 bits to spare.
+//4=16,5=32,6=64,7=128,10=1024
 struct wxCache_struct {
-  byte wd : 4;      //Wind direction / 22.5 (remember to multiply)
-  byte ws : 6;      //Wind speed
   byte gust : 4;    //Wind gust = gust * 2 + wind speed!!
-  byte temp1;   // in F
-  byte hum1;    
-  byte pres1;   //Pressure in hPa minus 900
-  byte temp2;
-  byte volt2;   //Voltage * 10 (remember to divide by 10)
-  byte amp2;    //Milliamps / 10 (remember to multiply by 10)
+  byte wd : 4;      //Wind direction / 22.5 (remember to multiply)
+  byte pres1;       //Pressure in hPa minus 900
+  byte temp2;       //Temp in F for internal Brain Box
+  byte volt2;       //Voltage * 10 for battery
+  unsigned int amp2 : 10;    //Milliamps for battery, / 4 (-500 to 3500ma)
+  byte ws : 6;      //Wind speed
+  byte humid2 : 5;  //Humidity inside / 3.23
 };
 
 time_t wxCache_time;
 byte wxCache_count;
+byte wxCache_lastSaved;
+byte wxCache_lastSent;
 #define WX_CACHE_MAX 60
 
 wxCache_struct wxCache[WX_CACHE_MAX];
 //2,028 used or 6,164 free without storage
 //4,428 used or 3,764 free with 4 hours storage
 
+String wxStringCache[10];
 
 
 //**************************
@@ -604,88 +605,15 @@ void setup()
 
     // DEBUG: populates the array so it takes up RAM. Enough for 4 hours of data if WX_CACHE_MAX is 240.
     for (byte i = 0; i < WX_CACHE_MAX; i++) {
-      wxCache[i].ws = i;
-      //now 4428 used 3764 free
+      wxCache[i].ws = 0;
+      wxCache[i].gust = 0;
+      wxCache[i].wd = 0;
+      wxCache[i].pres1 = 0;
+      wxCache[i].temp2 = 0;
+      wxCache[i].volt2 = 0;
+      wxCache[i].amp2 = 0;
     }
 
-    //**********************************
-    //***** SD Card Stuff  *************
-    //**********************************
-
-    /*
-    Serial.print("\nInitializing SD card in 250ms... ");
-    delay(250);
-    wdt_reset();
-
-    pinMode(SS, OUTPUT);
-    if (!SD.begin(SdChipSelect)) {
-      Serial.println("SD Failed to start!!");
-    }
-    //File startLog = SD.open("start.log");
-    File root = SD.open("/");
-    printDirectory(root, 0);
-    root.close();
-    */
-
-    // we'll use the initialization code from the utility libraries
-    // since we're just testing if the card is working!
-    /*
-    if (!card.init(SPI_HALF_SPEED, SdChipSelect)) {
-      Serial.println("initialization failed. Things to check:");
-      Serial.println("* is a card inserted?");
-      Serial.println("* is your wiring correct?");
-      Serial.println("* did you change the chipSelect pin to match your shield or module?");
-    } else {
-      Serial.println("Wiring is correct and a card is present.");
-  
-      // print the type of card
-      Serial.print("\nCard type: ");
-      switch (card.type()) {
-        case SD_CARD_TYPE_SD1:
-          Serial.println("SD1");
-          break;
-        case SD_CARD_TYPE_SD2:
-          Serial.println("SD2");
-          break;
-        case SD_CARD_TYPE_SDHC:
-          Serial.println("SDHC");
-          break;
-        default:
-          Serial.println("Unknown");
-      }
-    
-      // Now we will try to open the 'volume'/'partition' - it should be FAT16 or FAT32
-      if (!volume.init(card)) {
-        Serial.println("Could not find FAT16/FAT32 partition.\nMake sure you've formatted the card");
-        return;
-      }
-    
-    
-      // print the type and size of the first FAT-type volume
-      uint32_t volumesize;
-      Serial.print("\nVolume type is FAT");
-      Serial.println(volume.fatType(), DEC);
-      Serial.println();
-    
-      volumesize = volume.blocksPerCluster();    // clusters are collections of blocks
-      volumesize *= volume.clusterCount();       // we'll have a lot of clusters
-      volumesize *= 512;                         // SD card blocks are always 512 bytes
-      Serial.print("Volume size (bytes): ");
-      Serial.println(volumesize);
-      Serial.print("Volume size (Kbytes): ");
-      volumesize /= 1024;
-      Serial.println(volumesize);
-      Serial.print("Volume size (Mbytes): ");
-      volumesize /= 1024;
-      Serial.println(volumesize);
-    
-    
-      Serial.println("\nFiles found on the card (name, date and size in bytes): ");
-      root.openRoot(volume);
-    
-      // list all files in the card with date and size
-      root.ls(LS_R | LS_DATE | LS_SIZE);
-    } */
 
     /**********************************************
      * EEPROM READ, see if we did a Watchdog crash!
@@ -800,6 +728,7 @@ void loop()
               incomingClient.print(" ");
               incomingClient.print(i);
               i++;
+              delay(500);
             }
             break;
           }
@@ -886,7 +815,6 @@ void loop()
       windgust_5m[minutes_5m] = 0;
 
       // Set the RTC if it needs it and we have good time from NTP
-      // FIXME: We should use RTC first and only occasionally check it against NTP.
       if (timeStatus() == timeSet) {
         // Long as we've got a good time source, only need to update every 10 minutes.
         setSyncInterval(600);
@@ -931,16 +859,6 @@ void loop()
             timeZone = -8;
           }
         } // END of Every 10 Minutes, while the correct date & time are known
-        // If the log filename does not have a date & time,
-        // open a new log filename with the date & time since we know that now.
-        /*
-        if (filename == "log-nodate") {
-          logSome("Date found at: " + year() + month() + day());
-          logOneLine(" @ " + hour() + minute() + second());
-          logFile.close();
-          filename = "log" + year() + month() + day();
-          logFile = SD.open(filename, FILE_WRITE);
-        } */
       } else if (timeStatus() == timeNeedsSync) {
         //If we don't have valid time, check for time every 2 minutes. Otherwise it's normally once an hour.
         setSyncInterval(120);
@@ -976,12 +894,18 @@ void loop()
 #else
       Serial.print(F("The time of day is: "));
       Serial.print(hour()); Serial.print(":"); Serial.print(minute());
-      if ( (minutesToday < sunrise - 60) or (minutesToday > sunset - 15) ) {
+      // Go into night (power save) mode if:
+      if ((minutesToday < sunrise - 60)        // over an hour before sunrise
+      or  (minutesToday > sunset - 15)         // over 15 mintues after sunset
+      or  (ina219b_volts < 12.2)               // battery is critically low voltage
+      or ((ina219b_ma < -50)                   // Not charging; except still upload every 10 minutes during the day
+       and ((minute() % 10) or (minute() % 10) - 1)) )  // 10, 11, 20, 21, 30, 31, etc..  because it can take until the next minute before the Ubiquiti is ready.
+      {
 
         Serial.print(F(", which is Night time. We will switch to daytime at "));
         Serial.print((sunrise - 60) / 60); Serial.print(":"); Serial.println((sunrise - 60) % 60);
 #endif
-        // We're not between "half an hour before sunrise" and sunset, so turn stuff off.
+        // We're not between "an hour before sunrise" and "15 minutes after sunset", so turn stuff off.
         // First set variables and record in eeprom that we're in power save mode.
         if (!powerSave) {
           powerSave = true;
@@ -990,7 +914,8 @@ void loop()
     
         disableEthernet();
 
-      } else {
+      // Don't come back to daytime unless volts are safely above 12.3
+      } else if (ina219b_ma > 12.3) {
         Serial.print(F(", which is Day time. We will switch to night at "));
         Serial.print((sunset - 15) / 60); Serial.print(":"); Serial.println((sunset - 15) % 60);
         // Otherwise, make sure things are TURNED ON
@@ -1016,16 +941,16 @@ void loop()
       * * * * * * * * * * * * * * * * * * * * * * * * */
 
       //If the charge rate is too high, cut it off. Unless we just resumed.. then let it soak up a little sun first.
-      if ((ina219b_current > 2000) and ( (resumeSolarStartTime + resumeSolarMinutes * 60) <= now() )) {
+      if ((ina219b_ma > 1800) and ( (resumeSolarStartTime + resumeSolarMinutes * 60) <= now() )) {
 
         // Charging too fast. Poor man's slowdown: turn off the solar panel for a bit. 8-o
         Serial.println();
         Serial.print(getTimeWithZeros());
         Serial.print(F(": Pausing Solar Panels because charge rate "));
-        Serial.print(ina219b_current, 0);
-        Serial.println(F(" was > 1000mA."));
+        Serial.print(ina219b_ma, 0);
+        Serial.println(F(" was > 1800mA."));
         pauseSolar = true;
-        pauseSolarChargeCurrent = ina219b_current;
+        pauseSolarChargeCurrent = ina219b_ma;
         pauseSolarStartTime = now();
         disableSolar();
 
@@ -1162,7 +1087,7 @@ void loop()
     ina219a_MMAcurrentSum -= ina219a_MMAcurrentAvg;
     ina219a_MMAcurrentSum += ina219_MMAtemp;
     ina219a_MMAcurrentAvg  = ina219a_MMAcurrentSum / ina219a_MMAcount;
-    ina219a_current = ina219a_MMAcurrentAvg * 2.0; // * 2.0 because a resistor was added.
+    ina219a_ma = ina219a_MMAcurrentAvg * 2.0; // * 2.0 because a resistor was added.
 
     ina219a_MMAloops++;
 
@@ -1181,7 +1106,7 @@ void loop()
     ina219b_MMAcurrentSum -= ina219b_MMAcurrentAvg;
     ina219b_MMAcurrentSum += ina219_MMAtemp;
     ina219b_MMAcurrentAvg  = ina219b_MMAcurrentSum / ina219b_MMAcount;
-    ina219b_current = ina219b_MMAcurrentAvg * 2.0; // double because a resistor was added
+    ina219b_ma = ina219b_MMAcurrentAvg * 2.0; // double because a resistor was added
 
   }
 
@@ -1664,6 +1589,7 @@ byte uploadWeather()
 {
   if (powerSave) {
     Serial.println("UploadWeather() called, but NO DATA SENT because of Power Save mode.");
+    wxStringCache[minute() % 10] = getWeatherString();
     return 50;
   }
   
@@ -1673,6 +1599,7 @@ byte uploadWeather()
   logSome(". ina219a readings this minute: ");
   logOneLine(ina219a_MMAloops);
   byte uploadStatus = 90; //90 = haven't tried stopping the client yet.
+  String strPut;
 
   ShowSockStatus();   //DEBUG: print IP Socket status on serial.
 
@@ -1684,21 +1611,24 @@ byte uploadWeather()
   }
 
   uploadStatus = 100; //100 = stopped client, but haven't tried connecting.
-  
-  String strPut = makeUploadWeatherPut(getWeatherString());
+
+  // Save the last 10 strings, keep track of the last one uploaded so we can be up to 10 minutes behind and still upload a simple string.
+  // Very RAM hungry, so this is a temporary measure.
+  wxStringCache[minute() % 10] = getWeatherString();
+  strPut = makeUploadWeatherPut(wxStringCache[wxCache_lastSent + 1]);
 
   //Serial.print(F(" before strPut, after strPut: "));
   //Serial.println(freeRam());
 
-  char charPut[300];
-  for (int i = 0; i < 300; i++) {
-    charPut[i] = 'x';
-  }
-  charPut[299] = '\0';
+  char charPut[200];
+//  for (int i = 0; i < 200; i++) {
+//    charPut[i] = 'x';
+//  }
+  charPut[199] = '\0';
   int strPutLength = strPut.length() + 1;
   Serial.print("strPut len: ");
   Serial.println(strPutLength);
-  if (strPutLength > 298) strPutLength = 298;
+  if (strPutLength > 198) strPutLength = 198;
   strPut.toCharArray(charPut, strPutLength);
 
   client.setTimeout(600);
@@ -1743,6 +1673,8 @@ byte uploadWeather()
 String getWeatherString() {
   String weatherString = "";
   int tempc = RTC.temperature();
+  byte wxMinute = minute();
+  wxCache_lastSaved = wxMinute;
 
   // 1: time
   if (hour() < 10) weatherString += String('0');
@@ -1763,19 +1695,20 @@ String getWeatherString() {
   weatherString += String(charComma);
   if (windSpeedAvg < 9.95) weatherString += String('0');
   weatherString += String(windSpeedAvg, 1);
+  put_windspeed(wxMinute, windSpeedAvg);
 
   // 4: wind speed, mph, 5 minute max (gust)
   weatherString += String(charComma);
   if (windgustmph_5m < 9.5) weatherString += String('0');
   weatherString += String(windgustmph_5m, 0);
+  put_windgust(wxMinute, windgustmph_5m);
 
   // 5: wind direction, 1 minute average
   weatherString += String(charComma);
   if ((winddir < 10 ) and (winddir >= 0)) weatherString += String("0"); //pad with zeros to keep formatting nicer
   if ((winddir < 100) and (winddir >= 0)) weatherString += String("0"); //pad with zeros to keep formatting nicer
   weatherString += String(winddir);
-  //weatherString += String(",windgustdir=");
-  //weatherString += String(windgustdir);
+  put_winddir(wxMinute, winddir);
 
   // 6: temperature, F, outside, instant
   weatherString += String(charComma);
@@ -1797,9 +1730,11 @@ String getWeatherString() {
 //      weatherString += "0";
 //    }
 
-  // 8: Barometric pressure, hPa, outside, instant from bme280a
+  // 8: Barometric pressure, hPa, outside, instant from bme280a (280b for now, since 280a doesn't exist yet)
   weatherString += String(charComma);
-  weatherString += String(bme280a.readFloatPressure() / 100.0, 2);
+  float pres1temp = bme280b.readFloatPressure() / 100.0;
+  weatherString += String(pres1temp, 2);
+  put_pres1(wxMinute, pres1temp);
 // All this wasbefore the BME280
 //    if (pressure > 0) {
 //      weatherString += String(pressure / 100.0, 1);
@@ -1813,7 +1748,7 @@ String getWeatherString() {
   //weatherString += String((pressure - oldPressure) / 100.0, 2);
   weatherString += "0";
 
-  // 10: Location string ("M" for Marshall, "L" for Lance, "D" for DJ
+  // 10: Location string ("M" for Marshall, "L" for Lance, "D" for DJ)
   weatherString += String(charComma);
   weatherString += String(wxOwner);
 
@@ -1829,28 +1764,32 @@ String getWeatherString() {
     weatherString += "0";
   }
 
-  // 13 (was 12b): temperature, F, inside BB from BME280b, instant
+  // 13 (was 12b): temperature, C, inside BB from BME280b, instant
   weatherString += String(charComma);
-  weatherString += String(bme280b.readTempC(), 2);
+  float temperature2temp = bme280b.readTempC();
+  weatherString += String(temperature2temp, 2);
+  put_temp2c(wxMinute, temperature2temp);
 
   // 14 (was 12c): humidity, %, inside BB bme280b, instant (for checking dewpoint eventually)
   weatherString += String(charComma);
-  weatherString += String(bme280b.readFloatHumidity(), 0);
+  float humidity2temp = bme280b.readFloatHumidity();
+  weatherString += String(humidity2temp, 0);
+  put_humid2(wxMinute, humidity2temp);
 
   // 15: Current on ina219 sensor A (Solar Panel)
   weatherString += String(charComma);
-  if (ina219a_current < 0) {
+  if (ina219a_ma < 0) {
     //negative numbers. There's a better way using dtostrf(), but that pads with spaces not zeros right? Can't have spaces.
     weatherString += String("-");
-    if (ina219a_current > -9.5)  weatherString += "0";
-    if (ina219a_current > -99.5) weatherString += "0";
-    weatherString += String(ina219a_current * -1, 0);
+    if (ina219a_ma > -9.5)  weatherString += "0";
+    if (ina219a_ma > -99.5) weatherString += "0";
+    weatherString += String(ina219a_ma * -1, 0);
   } else {
     //positive numbers
-    if (ina219a_current < 999.5) weatherString += "0";
-    if (ina219a_current < 99.5)  weatherString += "0";
-    if (ina219a_current < 9.5)   weatherString += "0";
-    weatherString += String(ina219a_current, 0);
+    if (ina219a_ma < 999.5) weatherString += "0";
+    if (ina219a_ma < 99.5)  weatherString += "0";
+    if (ina219a_ma < 9.5)   weatherString += "0";
+    weatherString += String(ina219a_ma, 0);
   }
 
   // 16: Voltage on ina219 sensor A (Solar Panel)
@@ -1860,23 +1799,25 @@ String getWeatherString() {
 
   // 17: Current on ina219 sensor B (Battery)
   weatherString += String(charComma);
-  if (ina219b_current < 0) {
+  if (ina219b_ma < 0) {
     //negative numbers. There's a better way using dtostrf(), but that pads with spaces not zeros right? Can't have spaces.
     weatherString += String("-");
-    if (ina219b_current > -9.5)  weatherString += "0";
-    if (ina219b_current > -99.5) weatherString += "0";
-    weatherString += String(ina219b_current * -1, 0);
+    if (ina219b_ma > -9.5)  weatherString += "0";
+    if (ina219b_ma > -99.5) weatherString += "0";
+    weatherString += String(ina219b_ma * -1, 0);
   } else {
     //positive numbers
-    if (ina219b_current < 999.5) weatherString += "0";
-    if (ina219b_current < 99.5)  weatherString += "0";
-    if (ina219b_current < 9.5)   weatherString += "0";
-    weatherString += String(ina219b_current, 0);
+    if (ina219b_ma < 999.5) weatherString += "0";
+    if (ina219b_ma < 99.5)  weatherString += "0";
+    if (ina219b_ma < 9.5)   weatherString += "0";
+    weatherString += String(ina219b_ma, 0);
   }
+  put_amp2(wxMinute, ina219b_ma);
 
   // 18: Voltage on ina219 sensor B (Battery)
   weatherString += String(charComma);
   weatherString += String(ina219b_volts, 2);
+  put_volt2(wxMinute, ina219b_volts);
   //weatherString += String("v");
   //weatherString += String(batt_lvl, 2);
 
@@ -2054,7 +1995,7 @@ void printWeather()
   // 13: current in mA
   //(FIXME: same as ext sensor since we only have one)
   Serial.print(charComma);
-  Serial.print(ina219a_current, 2);
+  Serial.print(ina219a_ma, 2);
   Serial.print("mA");
 
   // 14: voltage onboard, ~5v source
@@ -2131,7 +2072,7 @@ void printWeather()
   Serial.print(charComma);
   Serial.print(ina219a_volts);
   Serial.print(charComma);
-  Serial.print(ina219a_current);
+  Serial.print(ina219a_ma);
 
   // NEWLINE:
   Serial.println();
