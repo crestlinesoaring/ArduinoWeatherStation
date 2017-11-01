@@ -8,7 +8,7 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "19a";
+const String wxVersion = "19d";
 const String wxOwner = "M";
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
@@ -16,7 +16,7 @@ const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 19a 2017/10/25) starting at ms ";
+const String startupMessage = "UM Weather Station (ver 19d 2017/11/01) starting at ms ";
 //#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
 
 
@@ -897,9 +897,8 @@ void loop()
       // Go into night (power save) mode if:
       if ((minutesToday < sunrise - 60)        // over an hour before sunrise
       or  (minutesToday > sunset - 15)         // over 15 mintues after sunset
-      or  (ina219b_volts < 12.2)               // battery is critically low voltage
-      or ((ina219b_ma < -50)                   // Not charging; except still upload every 10 minutes during the day
-       and ((minute() % 10) or (minute() % 10) - 1)) )  // 10, 11, 20, 21, 30, 31, etc..  because it can take until the next minute before the Ubiquiti is ready.
+      or  ( (ina219b_volts < 12.3)               // battery is critically low voltage
+       and ((minute() % 20) > 2 )) )  // 00, 01, 02, 20, 21, 22, 40, 41, 42, Because it can take until the next minute before the Ubiquiti is ready.
       {
 
         Serial.print(F(", which is Night time. We will switch to daytime at "));
@@ -915,7 +914,7 @@ void loop()
         disableEthernet();
 
       // Don't come back to daytime unless volts are safely above 12.3
-      } else if (ina219b_ma > 12.3) {
+      } else if (ina219b_volts > 12.4) {
         Serial.print(F(", which is Day time. We will switch to night at "));
         Serial.print((sunset - 15) / 60); Serial.print(":"); Serial.println((sunset - 15) % 60);
         // Otherwise, make sure things are TURNED ON
@@ -1615,7 +1614,8 @@ byte uploadWeather()
   // Save the last 10 strings, keep track of the last one uploaded so we can be up to 10 minutes behind and still upload a simple string.
   // Very RAM hungry, so this is a temporary measure.
   wxStringCache[minute() % 10] = getWeatherString();
-  strPut = makeUploadWeatherPut(wxStringCache[wxCache_lastSent + 1]);
+  //strPut = makeUploadWeatherPut(wxStringCache[wxCache_lastSent + 1]);
+  strPut = makeUploadWeatherPut(getWeatherString());
 
   //Serial.print(F(" before strPut, after strPut: "));
   //Serial.println(freeRam());
