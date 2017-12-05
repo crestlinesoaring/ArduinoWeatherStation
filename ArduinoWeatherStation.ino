@@ -8,7 +8,7 @@
  Much of this is based on Mike Grusin's USB Weather Board code: https://www.sparkfun.com/products/10586
 
  */
-const String wxVersion = "19d";
+const String wxVersion = "19i";
 const String wxOwner = "M";
 const byte ina219a_HWaddr = 0x40;  //0x40 for everyone but Lance. 0x44 for Lance.
 const byte ina219b_HWaddr = 0x41;  //
@@ -16,8 +16,9 @@ const byte bme280a_HWaddr = 0x76;  //Default may be 0x77 depending on mfgr
 const byte bme280b_HWaddr = 0x77;
 const bool disableNTP = false;      //Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 19d 2017/11/01) starting at ms ";
-//#define FOURMINUTEDAY              // Switch from day to night every four minutes for DEBUG
+const String startupMessage = "UM Weather Station (ver 19i 2017/12/04) starting at ms ";
+const byte wifiStartupDelay = 75; // Seconds to wait for Ubiquity Wifi startup
+//#define FOURMINUTEDAY               // Switch from day to night every four minutes for DEBUG
 
 
 #include <avr/wdt.h>   // WatchDog Timer. If I hit an endless loop, reset.
@@ -28,9 +29,10 @@ const String startupMessage = "UM Weather Station (ver 19d 2017/11/01) starting 
 #include <TimeLib.h>   // https://github.com/PaulStoffregen/Time
 #include <Timezone.h>  // https://github.com/JChristensen/Timezone, might conflict with timelib above?
 #include <DS3232RTC.h> // https://github.com/JChristensen/DS3232RTC, using a DS3231, but it's still supported.
+#include "SdFat.h"     // https://github.com/greiman/SdFat, Read & write SD card for data logging.
 //#include "TinyGPS.h" // https://github.com/mikalhart/TinyGPS, GPS module for time with no Internet
-#include "SparkFunMPL3115A2.h" // Pressure sensor - Search "SparkFun MPL3115" and install from Library Manager
-#include "SparkFunHTU21D.h"    // Humidity sensor - Search "SparkFun HTU21D" and install from Library Manager
+//#include "SparkFunMPL3115A2.h" // Pressure sensor - Search "SparkFun MPL3115" and install from Library Manager
+//#include "SparkFunHTU21D.h"    // Humidity sensor - Search "SparkFun HTU21D" and install from Library Manager
 #include "Adafruit_INA219.h"   // Voltage/Current sensor. https://github.com/adafruit/Adafruit_INA219
 #include "SparkFunBME280.h"    // High precision Temp & Humidity sensor. https://github.com/sparkfun/SparkFun_BME280_Arduino_Library
 
@@ -48,8 +50,8 @@ Adafruit_INA219 ina219a(ina219a_HWaddr);     // First  ina219 sensor: A
 Adafruit_INA219 ina219b(ina219b_HWaddr);     // Second ina219 sensor: B
 BME280 bme280a;                              // First  bme280 sensor: A
 BME280 bme280b;                              // Second bme280 sensor: B
-MPL3115A2 myPressure;            //Sparkfun pressure sensor
-HTU21D myHumidity;               //Sparkfun humidity sensor
+//MPL3115A2 myPressure;            //Sparkfun pressure sensor
+//HTU21D myHumidity;               //Sparkfun humidity sensor
 
 
 //Hardware pin definitions, weather station
@@ -116,20 +118,23 @@ int days;                   //Yes I'm optimistic
 int sunrise;                //Minutes after midnight for sunrise
 int sunset;                 //Minutes after midnight for sunset
 byte sunriseDay = 0;        //Day we last calculated sunrise/sunset for. If it's not today, calc again.
+byte lastRealMinute;        //Keep track of when it's a new minute() (Real time, not runtime). Used to check for second() == 0, but that's not reliable.
 bool justBooted = true;     //Some stuff settles after the first minute, so let's keep track of that.
 bool justRestarted = true;  //Print an R at the end of the first upload attempt to make it easy to see a reboot.
 bool powerSave = false;     //Set a flag when we're in power save mode. Do some stuff different.
 bool ethEnabled = false;    //Set once Eth is enabled because enabling incurs a 30 second pause that we don't want to repeat.
+bool wifiEnabled = false;   //Set once wifi is enabled so we don't transmit when it's not on.
 bool pauseSolar = false;    //We need to charge pausing when it gets hot or if charging too fast. It == battery, box, outside, etc...
 byte pauseSolarMinutes = 2; //How long to leave solar off when we turn it off.
 byte resumeSolarMinutes = 3;//How long to leave solar ON even if charge rate is high.
 float pauseSolarChargeCurrent;  //Store the battery charging rate that resulted in a solar panel "pause" so we can report it.
+time_t wifiStartTime = 0;   // Ubiquiti M5 takes ~64 seconds to start, need to keep track of when it started.
 time_t pauseSolarStartTime; //Keep track of when we paused the solar panel so we can leave it off for a set time.
 time_t resumeSolarStartTime;//Similarly, what time we resumed so we don't cut it off too fast.
 time_t reportWatchdog = 0;  //Do we need to report a watchdog reset?
 time_t recentTime = 0;      //Set the current time periodically so we can use it in the Watchdog Interrupt
 time_t lastCrashTime = 0;
-const char charComma = ',';       //Save 16 bytes with Serial.print(charComma) instead of Serial.print(",") all over.
+const char charComma = ',';       //Save memory with Serial.print(charComma) instead of Serial.print(",") all over.
 //const char compile_date[] = __DATE__ " " __TIME__;
 
 long lastWindCheck = 0;
@@ -238,17 +243,17 @@ volatile unsigned long raintime, rainlast, raininterval, rain;
 //****************************
 
 // Structure to hold essential data for overnight storage or batched transmission during cloudy days.
-// 6 bytes so far, with 3 bits to spare.
-//4=16,5=32,6=64,7=128,10=1024
+// 6 bytes so far, with 3 bits to spare. (may be inaccurate)
+//bit cheat-sheet: 4=16, 5=32, 6=64, 7=128, 10=1024
 struct wxCache_struct {
-  byte gust : 4;    //Wind gust = gust * 2 + wind speed!!
-  byte wd : 4;      //Wind direction / 22.5 (remember to multiply)
-  byte pres1;       //Pressure in hPa minus 900
-  byte temp2;       //Temp in F for internal Brain Box
-  byte volt2;       //Voltage * 10 for battery
+  byte gust    : 4;    //Wind gust = gust * 2 + wind speed!!
+  byte wd      : 4;    //Wind direction / 22.5 (remember to multiply)
+  byte pres1   : 8;    //Pressure in hPa minus 900
+  byte temp2   : 8;    //Temp in F for internal Brain Box
+  byte volt2   : 8;    //Voltage * 10 for battery
   unsigned int amp2 : 10;    //Milliamps for battery, / 4 (-500 to 3500ma)
-  byte ws : 6;      //Wind speed
-  byte humid2 : 5;  //Humidity inside / 3.23
+  byte ws      : 6;    //Wind speed
+  byte humid2  : 5;    //Humidity inside / 3.23
 };
 
 time_t wxCache_time;
@@ -304,14 +309,6 @@ uint8_t ethSockStatus[MAX_SOCK_NUM];
 // NTP (date & time) stuff
 unsigned int NTPlocalPort = 8888;    // Local port to send from & listen for UDP NTP packets
 int timeZone = -7;                   // Pacific (Daylight = -7 / Standard = -8) Time (FIXME: add DST handling someday)
-time_t pacific, utc;
-TimeChangeRule *tcr;
-TimeChangeRule usPDT = {"PDT", Second, Sun, Mar, 2, -420};  //UTC - 7 hours
-TimeChangeRule usPST = {"PST", First, Sun, Nov, 2, -480};   //UTC - 8 hours
-Timezone usPacific(usPDT, usPST);
-//utc = now();  //current time from the Time Library
-//pacific = usPacific.toLocal(utc, &tcr);
-
 
 const int NTP_PACKET_SIZE = 48;
 byte packetBuffer[ NTP_PACKET_SIZE ];
@@ -326,33 +323,19 @@ void enableEthernet() {
 
   // DON'T KEEP ENABLING ONCE IT'S ALREADY ENABLED! It's wasteful. Also it makes an endless loop if the 30 seconds crosses the "second zero" boundary.
   if (ethEnabled) return;
+
+  enableWifi();
   
   Serial.println();
   Serial.print(getTimeWithZeros());
   Serial.print(": enableEthernet() called. Ubiquiti startup delay, 25 seconds:    ");
 
-  pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                 // prepares Ubiquiti power control pin
-  digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_ENABLED);  // turns Ubiquiti on
+  // Re-enable the pins that were disabled during power save.
+  pinMode(SS,   OUTPUT);
+  pinMode(SCK,  OUTPUT);
+  pinMode(MISO, OUTPUT);
+  pinMode(MOSI, OUTPUT);
 
-  // Ubiquiti takes 30 seconds to turn on and Ethernet takes 5; try to make them ready at the same time
-  // This a poor way to accomplish this task; better would be to ping
-  for (int i=25; i>0; i--) {
-
-    // Count down the seconds on Serial. Character 8 is the backspace.
-    Serial.write(8);
-    if (i > 9) {
-      Serial.write(8);
-    }
-    if (i == 10) {
-      Serial.write("0");
-    }
-    Serial.print(i - 1);
-
-    wdt_reset();
-    delay(1000);
-  }
-
-  pinMode(SS, OUTPUT);
   pinMode(PIN_ETH_DISABLE, OUTPUT);                     // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_ENABLED);           // turns ETH shield on
   
@@ -361,7 +344,7 @@ void enableEthernet() {
   Serial.println();
   Serial.print(getTimeWithZeros());
   Serial.print(": Eth startup delay, 5 more seconds:  0");
-  for (int i=5; i>0; i--) {
+  for (int i=2; i>0; i--) {
 
     // Count down the seconds on Serial. Character 8 is the backspace.
     Serial.write(8);
@@ -386,43 +369,91 @@ void enableEthernet() {
 
 }
 
+void enableWifi() {
+
+  if (wifiEnabled) return;
+  Serial.println(F("enableWifi called, wasn't already enabled"));
+
+  pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                 // prepares Ubiquiti power control pin
+  digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_ENABLED);  // turns Ubiquiti on
+  wifiStartTime = millis();
+  
+
+  // Ubiquiti takes over 60 seconds to turn on and Ethernet takes 5; try to make them ready at the same time
+  // This a poor way to accomplish this task; it should set a flag and check the flag in loop().
+  /* Moved to loop()!
+  for (int i=45; i>0; i--) {
+
+    // Count down the seconds on Serial. Character 8 is the backspace.
+    Serial.write(8);
+    if (i > 9) {
+      Serial.write(8);
+    }
+    if (i == 10) {
+      Serial.write("0");
+    }
+    Serial.print(i - 1);
+
+    wdt_reset();
+    delay(1000);
+  }
+
+  wifiEnabled = true;
+  */
+
+}
+
 // Turns off power for network components to save power
 void disableEthernet() {
   Serial.println();
   Serial.print(getTimeWithZeros());
-  Serial.println(F(": disableEthernet() called. Shutting everything down."));
+  Serial.println(F(": disableEthernet() called."));
   incomingClient.stop();
   client.stop();
 
-  pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                  // prepares Ubiquiti power control pin
-  digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_DISABLED);  // turns Ubiquiti off
+  disableWifi();
 
                                              //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
                                              //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
-  pinMode(MOSI, INPUT);                      //             prevents leakage through ESD diodes
-  pinMode(MISO, INPUT);                      //             prevents leakage through ESD diodes
-  pinMode(SCK, INPUT);                       //             prevents leakage through ESD diodes
-  pinMode(SS, INPUT);                        //             prevents leakage through ESD diodes
+//  pinMode(MOSI, INPUT);                      //             prevents leakage through ESD diodes
+//  pinMode(MISO, INPUT);                      //             prevents leakage through ESD diodes
+//  pinMode(SCK,  INPUT);                      //             prevents leakage through ESD diodes
+//  pinMode(SS,   INPUT);                      //             prevents leakage through ESD diodes
 
   pinMode(PIN_ETH_DISABLE, OUTPUT);                      // prepares ETH power control pin
   digitalWrite(PIN_ETH_DISABLE, ETH_DISABLED);           // turns ETH shield off
   ethEnabled = false;
 }
 
+void disableWifi() {
+
+  Serial.println();
+  Serial.print(getTimeWithZeros());
+  Serial.println(F(": disableWifi() called."));
+
+  pinMode(PIN_UBIQUITI_DISABLE, OUTPUT);                  // prepares Ubiquiti power control pin
+  digitalWrite(PIN_UBIQUITI_DISABLE, UBIQUITI_DISABLED);  // turns Ubiquiti off
+  wifiEnabled = false;
+  wifiStartTime = 0;
+
+}
+
 //**************************************
 //****** SD Card Reading ***************
 //**************************************
 
-//#include <SD.h>
-
-/*Sd2Card card;
-SdVolume volume;
-SdFile root; 
-File logFile;
-String filename = "log-nodate";
-
-const int SdChipSelect = 4;
-*/
+/******************* BENCHMARKING *******************
+  write speed and latency    read speed and latency
+   speed,   max, min, avg     speed, max, min,avg
+  KB/Sec,  usec,usec,usec    KB/Sec,usec,usec,usec
+  183.70,212672,2264,2780    279.23,4688,1784,1827
+  194.36,211068,2236,2627    279.26,3584,1784,1826
+ ***************************************************/
+#define sdErr(msg) sd.errorPrint(F(msg))
+SdFat sd;
+SdFile file;
+unsigned int sdPosition;
+const uint8_t chipSelect = 4;
 
 
 
@@ -430,6 +461,7 @@ const int SdChipSelect = 4;
 //
 //Interrupt routines (these are called by the hardware interrupts, not by the main code)
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
 void rainIRQ()
 // Count rain gauge bucket tips as they occur
 // Activated by the magnet and reed switch in the rain gauge, attached to input D2
@@ -459,22 +491,33 @@ void wspeedIRQ()
 // Watchdog timer fired, let's record a little and report it next bootup.
 ISR(WDT_vect)
 {
-    //Serial.println("--==000 Entered Watchdog Interrupt Service Request Handler 000==--");
-
-    //time_t lastCrashTime;  //Made this a volatile global variable
-
     // Get the last crash time. If it's too recent, we won't write a new time to avoid thrashing EEPROM too frequently.
     EEPROM.put(10, 1);
-//    EEPROM.get(11, lastCrashTime);
-//    if (recentTime > lastCrashTime + 600) {
-//      EEPROM.put(10, 1);                // write a "1" to the first byte to indicate the data in second byte is valid and the ISR triggered properly
-//      EEPROM.put(11, recentTime);
-//    }
+    EEPROM.get(11, lastCrashTime);
+    if (recentTime > lastCrashTime + 600) {
+      EEPROM.put(10, 1);                // write a "1" to the first byte to indicate the data in second byte is valid and the ISR triggered properly
+      EEPROM.put(11, recentTime);
+    }
 
-    //Serial.println("---===00 Done with Watchdog ISR 00===---");
+    //Enable interrupts, see if serial works. Maybe we can do more with the watchdog?
+    sei();
+    Serial.print(F("recentTime is ")); Serial.print(recentTime); Serial.print(F(" lastCrashTime is ")); Serial.print(lastCrashTime); Serial.print(": "); Serial.println(recentTime - lastCrashTime);
+    Serial.println(F("---===00 Done with Watchdog ISR 00===---"));
 
     while(true);                  // triggers the second watchdog timeout for a reset (does this actually work?)
 }
+
+/* sets the watchdog timer both interrupt and reset mode with an 8 second timeout */
+void enableWatchdog()
+{
+  cli();
+  MCUSR &= ~(1<<WDRF);
+  wdt_reset();
+  WDTCSR |= (1<<WDCE) | (1<<WDE);
+  WDTCSR = (~(1<<WDP1) & ~(1<<WDP2)) | ((1<<WDE) | (1<<WDIE) | (1<<WDP3) | (1<<WDP0));
+  sei();
+}
+
 
 
 /**********************************************************
@@ -491,11 +534,12 @@ void setup()
     Serial.begin(115200);
     Serial.println();
     Serial.println();
-    Serial.print(startupMessage);
+    Serial.print(startupMessage); // Set at the top of sketch to make it easier to find & update
     Serial.println(millis());
 
     //Enable the WatchDog, 8 second timeout.
-    wdt_enable(WDTO_8S);
+    //wdt_enable(WDTO_8S);
+    enableWatchdog();
 
     if (EEPROM.read(eePowerSave) == 255) {
       Serial.println(F("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0)."));
@@ -537,11 +581,6 @@ void setup()
     pinMode(REFERENCE_3V3, INPUT);
     pinMode(LIGHT, INPUT);
 
-    //Configure the humidity sensor
-    Serial.print(F("Starting Sparkfun W-Shield Humidity sensor, took ")); usTemp = micros();
-    myHumidity.begin();
-    Serial.print(micros() - usTemp); Serial.println("us");
-
     //Setup INA219 voltage and current sensor(s)
     Serial.print(F("Starting INA219a Volt & current sensor A: ")); usTemp = micros();
     ina219a.begin();
@@ -574,6 +613,7 @@ void setup()
     Serial.print(", took "); Serial.print(micros() - usTemp); Serial.println("us.");
 
 
+    /*  NOT USING THE SPARKFUN WEATHER SHIELD ANY MORE
     //Configure the Sparkfun pressure sensor
     Serial.print(F("Starting Sparkfun pressure, took ")); msTemp = millis();
     delay(250);                            // Little delay in case it helps
@@ -584,6 +624,12 @@ void setup()
     pressure = myPressure.readPressure();  // Get an initial reading so we can report in the first minute
     oldPressure = pressure;                // Make sure the "pressure delta" is zero at startup
     Serial.print(millis() - msTemp); Serial.println("ms.");
+
+    //Configure the humidity sensor
+    Serial.print(F("Starting Sparkfun W-Shield Humidity sensor, took ")); usTemp = micros();
+    myHumidity.begin();
+    Serial.print(micros() - usTemp); Serial.println("us");
+    */
 
     seconds = 0;
     lastSecond = millis();
@@ -604,6 +650,7 @@ void setup()
     loopDelta = 0;
 
     // DEBUG: populates the array so it takes up RAM. Enough for 4 hours of data if WX_CACHE_MAX is 240.
+    Serial.print("Sizeof wxCache: "); Serial.println(sizeof(wxCache));
     for (byte i = 0; i < WX_CACHE_MAX; i++) {
       wxCache[i].ws = 0;
       wxCache[i].gust = 0;
@@ -640,7 +687,14 @@ void setup()
       Serial.print(minute(reportWatchdog));
       Serial.print(":");
       Serial.print(second(reportWatchdog));
+      Serial.print(" ("); Serial.print(reportWatchdog); Serial.print(")");
       Serial.println();
+
+      if (reportWatchdog > 4294000000) {
+        // Seems likely the eeprom is uninitialized
+        Serial.println("Resetting eeprom reset-time to zero because it was too high");
+        EEPROM.put(11, 0.0F);
+      }
     }
 
 
@@ -648,10 +702,12 @@ void setup()
     wdt_reset();
     if (RTC.get() > 1506693603) {
       // If we have a working RTC, let's just use it. Every few minutes we'll check for NTP too.
-      Serial.println(F("RTC selected as time source."));
-      Serial.println();
+      Serial.print(F("RTC selected as time source @ "));
       setSyncProvider(RTC.get);
       setSyncInterval(300);           // Update system time often because it actually slews pretty fast; 4 second an hour is typical.
+      recentTime = now();
+      Serial.print(getDateWithZeros()); Serial.print(" "); Serial.println(getTimeWithZeros());
+      Serial.println();
     } else {
       // 0 Means the RTC didn't work, set NTP as the sync provider, with an initially agressive Sync Interval because we depend on it.
       Serial.print(F("No RTC? Sending NTP packet at "));
@@ -678,6 +734,28 @@ void setup()
     logFile = SD.open(filename, FILE_WRITE);
     NOSD */
 
+    // Start SD. Make sure a "current year" folder exists, set it as current directory.
+    Serial.print("Starting SD, ");
+    if (!sd.begin(chipSelect, SD_SCK_MHZ(50))) {
+      sd.initErrorPrint();
+    }
+
+    // Make a char[] of the year, roundabout way through String().toCharArray();
+    char chrYear[5];
+    String(year()).toCharArray(chrYear, 5);
+    if (!sd.exists(chrYear)) {
+      Serial.print("creating Folder, ");
+      if (!sd.mkdir(chrYear)) sdErr("MKDir error");
+    }
+    if (!sd.chdir(chrYear)) sdErr ("ChDir error");
+    Serial.println("SD Done.");
+
+    //For Debugging, read today's whole file to Serial
+    char fileName[13];
+    String strFileName = getDateWithZerosNoSeparator() + ".dat";
+    strFileName.toCharArray(fileName, 13);
+    //sdReadFileToSerial(fileName);
+
     //Print a header row. Though it gets out of date (and inaccurate) often.
     //Serial.println(F("time , date     ,w1avg,wmax,dir, tmp, hum, baro , dv ,rain,wnow, tmp, hum, 5v , 5v ,lght, uptime   , FreeMem  ,Raw Wdir, RTC time, Misc error messages"));
 //                    18:22,12/22/2016,02.16,13.1, -1,76.9,41.8,1009.6, 0.0,0.00,00.7,76.9,41.8,4.33,4.33,0.03,0.00:01:20,14532426,1928538
@@ -700,8 +778,9 @@ void setup()
 
 void loop()
 {
-  //First check for incoming Ethernet connections. So far, this is only "connecing to reset". Not much happens.
-  if (!powerSave) {
+
+  //Check for incoming Ethernet connections. So far, this is only "connecing to reset". Not much happens.
+  if (wifiEnabled) {
     msTemp = millis();
     incomingClient = server.available();
     if (incomingClient) {
@@ -713,24 +792,48 @@ void loop()
         //Serial.println(millis());
         if (incomingClient.available()) {
           char c = incomingClient.read();
+          int i;
           Serial.write(c);
           incomingClient.print(c);
-          if (c == 'R') {
-            wdt_reset();
-            Serial.println(F("---===---===--- Client hit R and [enter], which causes the reboot ---===---===---"));
-            incomingClient.println(F("R and Enter detected. Rebooting and disconnecting."));
-            delay(100);
-            Serial.println(); Serial.print(" ");
-            int i = 0;
-            while(true) { // this would surely cause a reboot, except we never seem to get here.
-              Serial.print(8);
-              Serial.print(i);
-              incomingClient.print(" ");
-              incomingClient.print(i);
-              i++;
-              delay(500);
-            }
-            break;
+          //if (c == 'R') {
+          switch (c) {
+            case 'R': // for Reset
+              wdt_reset();
+              Serial.println(F("---===---===--- Client hit R and [enter], which causes the reboot ---===---===---"));
+              incomingClient.println(F("R and Enter detected. Rebooting and disconnecting."));
+              delay(100);
+              Serial.println(); Serial.print(" ");
+              i = 0;
+              while(true) { // this would surely cause a reboot, except we never seem to get here.
+                Serial.print(8);
+                Serial.print(i);
+                incomingClient.print(" ");
+                incomingClient.print(i);
+                i++;
+                delay(500);
+              } // End while (true) for loop until Watchdog Reset
+              break; // 'R'eset
+            case 'C': // for Cache, dump what cached data we have
+              incomingClient.println(F("C and Enter detected. Dumping what we have cached in memory. Be sure to disconnect."));
+              for (byte i=0; i < 10; i++) {
+                Serial.println(wxStringCache[i]);
+                incomingClient.print(i); incomingClient.print(": ");
+                incomingClient.println(wxStringCache[i]);
+              }
+
+              break; // 'C'ache
+            case 'D': // for Dump today's file to this socket.
+              incomingClient.println(F("D and Enter detected. Dumping today's data file to this socket. No reboot (hopefully)"));
+              char fileName[13];
+              String strFileName = getDateWithZerosNoSeparator() + ".dat";
+              strFileName.toCharArray(fileName, 13);
+              
+              sdReadFileToSocket(fileName);
+              
+              incomingClient.println(F("---- Done dumping file"));
+              Serial.println(F("Done dumping file to Ethernet."));
+
+              break; // 'D'ump
           }
         }
       }
@@ -745,11 +848,14 @@ void loop()
 
   
   //Do "once a second stuff", mostly weather. Also keep track of which minute it is.
-  if(millis() - lastSecond >= 1000)
+  int elapsedMillis = millis() - lastSecond;
+  if( elapsedMillis >= 1000 )
   {
     digitalWrite(STAT1, HIGH); //Blink stat LED to show how long we're doing the "once a second" work
 
-    lastSecond += 1000;
+    // add one second for every 1000 ms that have passed
+    lastSecond += 1000 * (int)(elapsedMillis / 1000);
+    seconds += (int)(elapsedMillis / 1000);
     wdt_reset(); //I think once a second is enough for our 8 second watchdog.
 
     //Calc the wind speed and direction every second for 120 second to get 2 minute average
@@ -785,7 +891,6 @@ void loop()
         windgustdirection_5m[minutes_5m] = currentDirection;
     }
 
-
     //Check to see if this is a gust for the day (assuming daily reboots; this never resets on its own).
     if(currentSpeed > windgustmph)
     {
@@ -793,10 +898,23 @@ void loop()
         windgustdir = currentDirection;
     }
 
-    // Once-a-minute tasks
-    if(++seconds > 59)
+    // Wifi takes ~64 to 80 seconds to come alive, check every second to see if Wifi's ready yet.
+    // Use millis() instead of now() because early on (before RTC is set up), now() is invalid.
+    if (wifiStartTime) {
+      if (!int((millis() - wifiStartTime) / 1000) % 10) { Serial.print("Waiting for wifi to start up, it's been "); Serial.print((millis() - wifiStartTime) / 1000.0, 2); Serial.println(" seconds."); }
+      if ((millis() - wifiStartupDelay * 1000.0L) > wifiStartTime) {
+        Serial.println(" Done waiting! Wifi Enabled.");
+        wifiStartTime = 0;
+        wifiEnabled = true;
+      } else {
+        //Serial.println();
+      }
+    }
+
+    // Once-a-minute tasks; seconds are incremented at the top of loop() and may be > 59 until we get here. Hope that's okay!
+    if(seconds > 59)
     {
-      seconds = 0;
+      seconds = seconds % 60; // sometimes the loop takes longer than 1 second.
       if(++minutes > 59) 
       {
         minutes = 0;
@@ -819,7 +937,9 @@ void loop()
         // Long as we've got a good time source, only need to update every 10 minutes.
         setSyncInterval(600);
         recentTime = now();             //Update this once a minute. It will be used in the Watchdog ISR to give a rough date/time estimate.
-        if (minute() % 10 == 0) {
+
+        //Compare RTC to NTP, to set the RTC. Used to check every 10 minutes, now let's just check once an hour at :15 after.
+        if (minute() == 15) {
           unsigned int diffNTPRTC = 0;
           time_t timeRTC = RTC.get();
           time_t timeNTP = getNtpTime();
@@ -858,7 +978,7 @@ void loop()
           } else {
             timeZone = -8;
           }
-        } // END of Every 10 Minutes, while the correct date & time are known
+        } // END of once an hour on :15, while the correct date & time are known
       } else if (timeStatus() == timeNeedsSync) {
         //If we don't have valid time, check for time every 2 minutes. Otherwise it's normally once an hour.
         setSyncInterval(120);
@@ -866,16 +986,7 @@ void loop()
         
       } // END of timeStatus() == timeSet
 
-      // Test with a random wait to timeout the watchdog and see how it handles it.
-//      long randomWatchdogTripper;
-//      randomWatchdogTripper = random(12000);
-//      Serial.print("----**** Randomly waiting to try to trip the watchdog ****----, this many ms: ");
-//      Serial.println(randomWatchdogTripper);
-//      delay(randomWatchdogTripper);
-//      Serial.println("----**** I guess we didn't die this time. ****----");
-      // Test with a random wait to timeout the watchdog and see how it handles it.
-
-      // Check every minute that we know sunrise/sunset for today. If not, calc it.
+      // Check every minute that we know sunrise/sunset for today. If not, calculate it (roughly).
       if (day() > sunriseDay) getRiseSet();
 
     
@@ -887,9 +998,9 @@ void loop()
       int minutesToday = hour() * 60 + minute();
 
 #ifdef FOURMINUTEDAY
-      Serial.println(F("   !!DEBUG: Cycling to NIGHT every SIX minutes because of ""#define FOURMINUTEDAY"""));
-      if ( (minute() / 6) % 2 ) {
-        Serial.println(F("The time of day is: "));
+      Serial.println(F("   !!DEBUG: Cycling to NIGHT every TEN minutes because of ""#define FOURMINUTEDAY"""));
+      if ( (minute() / 10) % 2 ) {
+        Serial.println(F("Pretending that it's NIGHT time."));
 
 #else
       Serial.print(F("The time of day is: "));
@@ -913,7 +1024,7 @@ void loop()
     
         disableEthernet();
 
-      // Don't come back to daytime unless volts are safely above 12.3
+      // Don't come back to daytime unless volts are safely above 12.4
       } else if (ina219b_volts > 12.4) {
         Serial.print(F(", which is Day time. We will switch to night at "));
         Serial.print((sunset - 15) / 60); Serial.print(":"); Serial.println((sunset - 15) % 60);
@@ -926,9 +1037,9 @@ void loop()
           enableEthernet();
 
         }
-       
+
         //Really only need to enable it once. The constant enabling was causing problems.
-        //enableEthernet();
+        enableEthernet();
 
       } // End of night/day figuring out (for power save)
 
@@ -986,10 +1097,7 @@ void loop()
       //Once the time is reporting that it's synced and it's been at least 15 secs since boot, start reporting weather.
       if ((seconds > 30) and (timeStatus() == timeSet)) justBooted = false;
     } else {
-      if (second() == 0) {
-    //if (true) {  // for STRESS TEST we go once a second.
-        // Once a minute, on zero seconds (by NTP/RTC time, not since boot time), upload the weather.
-        //printWeather();      //DEBUG: print a slightly different weather string on serial.
+      if (lastRealMinute != minute()) { // new minute! Let's party.
         Serial.println(getWeatherString());
         uploadWeather();
         ina219a_MMAloops = 0;  //Reset to zero after upload (even if not successful)
@@ -1016,8 +1124,11 @@ void loop()
       Serial.print(second());
     }
 
-
-    digitalWrite(STAT1, LOW); //Turn off WeatherShield's blue stat LED
+    // At the end of the second, let the minute roll over. This lets us do "new minute" stuff exactly
+    // once a minute, without depending on having a loop() every second in case of long Ethernet timeouts.
+    // previously we checked if(second() == 0), but that's not reliable and we could miss a minute.
+    lastRealMinute = minute();   
+    digitalWrite(STAT1, LOW);    //Turn off WeatherShield's blue stat LED
     
   } // END of ONCE A SECOND loop (every 1000ms)
 
@@ -1180,6 +1291,38 @@ void handleSerial() {
   }
 }
 
+String getDateWithZeros() {
+
+    String S;
+
+    if(year() < 10) S += "0";
+    S += String(year());
+    S += "/";
+    if(month() < 10) S += "0";
+    S += String(month());
+    S += "/";
+    if(day() < 10) S += "0";
+    S += String(day());
+
+    return S;
+
+}
+
+String getDateWithZerosNoSeparator() {
+
+    String S;
+
+    if(year() < 10) S += "0";
+    S += String(year());
+    if(month() < 10) S += "0";
+    S += String(month());
+    if(day() < 10) S += "0";
+    S += String(day());
+
+    return S;
+
+}
+
 String getTimeWithZeros() {
 
     String S;
@@ -1275,10 +1418,10 @@ void calcWeather()
     }
 
     //Calc humidity
-    humidity = myHumidity.readHumidity();
+    //humidity = myHumidity.readHumidity();
 
     //Calc tempf from pressure sensor
-    tempf = myPressure.readTempF();
+    //tempf = myPressure.readTempF();
 
     //Total rainfall for the day is calculated within the interrupt
     //Calculate amount of rainfall for the last 60 minutes
@@ -1287,11 +1430,12 @@ void calcWeather()
         rainin += rainHour[i];
 
     //Calc pressure but ONLY ONCE A MINUTE, so deltas are meaningful.
+    /*
     if (seconds == 59) {
       oldPressure = pressure;
       pressure = myPressure.readPressure();
       if (oldPressure == 0) oldPressure = pressure; //First time, let's not have a "delta" of the current pressure.
-    }
+    } */
 
     //Calc dewptf
 
@@ -1418,7 +1562,7 @@ int get_wind_direction()
 time_t getNtpTime()
 {
   // We don't want to send anything during power save times, for now.
-  if (powerSave) {
+  if (!wifiEnabled) {
     Serial.println("   NTP requested, but NO PACKET SENT due to Power Save mode.");
     return 0;
   }
@@ -1586,9 +1730,21 @@ void printDigits(int digits){
 
 byte uploadWeather()
 {
-  if (powerSave) {
+  String tempWeatherString = getWeatherString();
+  char charPut[200];
+  tempWeatherString.toCharArray(charPut, 180);
+
+  //Save to SD, even if we don't succeed uploading
+  char fileName[13];
+  String strTemp = getDateWithZerosNoSeparator() + ".dat";
+  strTemp.toCharArray(fileName, 13);
+  sdLogData(fileName, charPut);
+  
+  if (!wifiEnabled) {
     Serial.println("UploadWeather() called, but NO DATA SENT because of Power Save mode.");
-    wxStringCache[minute() % 10] = getWeatherString();
+    if (wifiStartTime) { Serial.print("millis() - Wifi (/1000) Start time: "); Serial.println((millis() - wifiStartTime) / 1000.0, 2); }
+    wxStringCache[minute() % 10] = tempWeatherString;
+    
     return 50;
   }
   
@@ -1613,14 +1769,13 @@ byte uploadWeather()
 
   // Save the last 10 strings, keep track of the last one uploaded so we can be up to 10 minutes behind and still upload a simple string.
   // Very RAM hungry, so this is a temporary measure.
-  wxStringCache[minute() % 10] = getWeatherString();
+  wxStringCache[minute() % 10] = tempWeatherString;
   //strPut = makeUploadWeatherPut(wxStringCache[wxCache_lastSent + 1]);
-  strPut = makeUploadWeatherPut(getWeatherString());
+  strPut = makeUploadWeatherPut(tempWeatherString);
 
   //Serial.print(F(" before strPut, after strPut: "));
   //Serial.println(freeRam());
 
-  char charPut[200];
 //  for (int i = 0; i < 200; i++) {
 //    charPut[i] = 'x';
 //  }
@@ -1676,6 +1831,12 @@ String getWeatherString() {
   byte wxMinute = minute();
   wxCache_lastSaved = wxMinute;
 
+  //Must read temperature first to get calibration for humidity and pressure.
+  float temperature2temp = bme280b.readTempC();
+  float humidity2temp = bme280b.readFloatHumidity();
+  float pres1temp = bme280b.readFloatPressure() / 100.0;
+
+
   // 1: time
   if (hour() < 10) weatherString += String('0');
   weatherString += String(hour());
@@ -1730,9 +1891,9 @@ String getWeatherString() {
 //      weatherString += "0";
 //    }
 
+
   // 8: Barometric pressure, hPa, outside, instant from bme280a (280b for now, since 280a doesn't exist yet)
   weatherString += String(charComma);
-  float pres1temp = bme280b.readFloatPressure() / 100.0;
   weatherString += String(pres1temp, 2);
   put_pres1(wxMinute, pres1temp);
 // All this wasbefore the BME280
@@ -1757,22 +1918,21 @@ String getWeatherString() {
   weatherString += String(wxVersion);
 
   // 12: temperature in the enclosure or 2nd sensor if we get one. In Celcius for Jimmy.
-  weatherString += String(charComma);
-  if (tempc) {
-    weatherString += String(tempc / 4.0, 1);
-  } else {
-    weatherString += "0";
-  }
+  // Removed because the RTC temp is so much slower and less precise than the BME temp.
+//  weatherString += String(charComma);
+//  if (tempc) {
+//    weatherString += String(tempc / 4.0, 1);
+//  } else {
+//    weatherString += "0";
+//  }
 
   // 13 (was 12b): temperature, C, inside BB from BME280b, instant
   weatherString += String(charComma);
-  float temperature2temp = bme280b.readTempC();
   weatherString += String(temperature2temp, 2);
   put_temp2c(wxMinute, temperature2temp);
 
   // 14 (was 12c): humidity, %, inside BB bme280b, instant (for checking dewpoint eventually)
   weatherString += String(charComma);
-  float humidity2temp = bme280b.readFloatHumidity();
   weatherString += String(humidity2temp, 0);
   put_humid2(wxMinute, humidity2temp);
 
@@ -1825,21 +1985,16 @@ String getWeatherString() {
   weatherString += String(charComma);
   //weatherString += String(days);
   //weatherString += String(".");
-  //if (hours < 10) weatherString += String('0');
-  //weatherString += String(hours + (days * 24));
-  //weatherString += String(":");
+  if (wxOwner == "L") { //Report the hours if this is Lance's. On Marshall there's never more than an hour.
+    if ((hours + days * 24) < 10) weatherString += String('0');
+    weatherString += String(hours + (days * 24));
+    weatherString += String(":");
+  }
   if (minutes < 10) weatherString += String('0');
   weatherString += String(minutes);
   weatherString += String(":");
   if (seconds < 10) weatherString += String('0');
   weatherString += String(seconds);
-
-  /* 18: loop counter. For diagnostics, mostly useless.
-  weatherString += String(charComma);
-  weatherString += String(loopCounter);
-  weatherString += String(charComma);
-  weatherString += String(loopCounter - loopDelta);
-  loopDelta = loopCounter; */
 
   // 18: print free memory? Interesting...
 //    weatherString += String(charComma);
@@ -1860,17 +2015,19 @@ String getWeatherString() {
   // 21+: Assorted info and error values
 
   // add socket status as 8 hex chars
-  bool reportSockets = false;
-  for (int i = 0; i < MAX_SOCK_NUM; i++) {
-    if ((ethSockStatus[i] > 0) and (ethSockStatus[i] != 0x14)) reportSockets = true;  // 0x14 == listen. We know one is listening always.
-  }
-  if (reportSockets) {
-    weatherString += String(charComma);
+  if (wifiEnabled) {
+    bool reportSockets = false;
     for (int i = 0; i < MAX_SOCK_NUM; i++) {
-      if (ethSockStatus[i] < 17) weatherString += String("0");
-      weatherString += String(ethSockStatus[i], 16);
+      if ((ethSockStatus[i] > 0) and (ethSockStatus[i] != 0x14)) reportSockets = true;  // 0x14 == listen. We know one is listening always.
     }
-  }
+    if (reportSockets) {
+      weatherString += String(charComma);
+      for (int i = 0; i < MAX_SOCK_NUM; i++) {
+        if (ethSockStatus[i] < 17) weatherString += String("0");
+        weatherString += String(ethSockStatus[i], 16);
+      }
+    }
+  } // if (wifiEnabled)
 
   if (pauseSolarChargeCurrent) {
     weatherString += String(charComma);

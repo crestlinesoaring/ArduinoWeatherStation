@@ -1,6 +1,6 @@
 
 // WIND SPEED
-// Wind Speed is 1:1, up to 63mph wind in 1 mph increments.
+// Wind Speed is a 6 bit value, 1:1, up to 63mph wind in 1 mph increments.
 void put_windspeed(byte m, byte windSpeed) {
   m = m % 60;
   if (windSpeed > 63) windSpeed = 63;
@@ -141,4 +141,124 @@ int get_amp2(byte m) {
   return (int)wxCache[m].amp2 * 4 - 500;
 }
 
+//Open the file, write the line of data, close the file.
+//This is expected to happen about once a minute, lets not leave the file open.
+//Eventually we will shut off the SD card reader to save power too.
+void sdLogData(char *fileName, String logData) {
 
+  msTemp = millis();
+  usTemp = micros();
+  Serial.print("Writing to SD file "); Serial.print(fileName); Serial.print("; ");
+
+  // Open the file for writing, create if doesn't exist
+  if (!file.open(fileName, O_CREAT | O_WRITE | O_APPEND)) {
+    sdErr("file.open");
+  }
+  Serial.print(F(" open, setting dateTimeCallback."));
+  file.dateTimeCallback(sdDateTime);
+
+  // Write the line of data, plus a newline for now. Subject to change.
+  wdt_reset();
+  file.print(logData);
+  file.println();
+
+  // Sync and close the file. Expect to only write once a minute...
+  if (!file.sync() || file.getWriteError()) {
+    sdErr("write error");
+  }
+
+  sdPosition = file.curPosition();
+  file.close();
+
+  Serial.print("done writing. Took ");
+  Serial.print(millis() - msTemp); Serial.print("ms, ");
+  Serial.print(micros() - usTemp); Serial.println("us.");
+  Serial.println();
+  
+}
+
+void sdReadFileToSerial(char *fileName) {
+
+  msTemp = millis();
+  wdt_reset();
+
+  Serial.print("Dumping SD file to serial: "); Serial.println(fileName);
+
+  //Open the file if it exists
+  if (!file.open(fileName, O_READ)) {
+    sdErr("file.open for read");
+  } else {
+    Serial.println("File opened, begin dumping...");
+
+    while (file.available()) {
+      Serial.write(file.read());
+      wdt_reset();
+    }
+
+    file.close();
+  }
+
+  //redundant file.close()
+  file.close();
+
+  Serial.print("  --- Done reading "); Serial.print(fileName); Serial.print(", took ");
+  Serial.print(millis() - msTemp); Serial.println("ms.");
+  
+}
+
+
+void sdReadFileToSocket(char *fileName) {
+
+  msTemp = millis();
+  wdt_reset();
+
+  Serial.print("Dumping SD file to ethernet socket: "); Serial.println(fileName);
+
+  //Open the file if it exists
+  if (!file.open(fileName, O_READ)) {
+    sdErr("file.open for read");
+  } else {
+    Serial.println("File opened, begin dumping...");
+
+    while (file.available()) {
+      wdt_reset();
+      incomingClient.write(file.read());
+    }
+
+    file.close();
+  }
+
+  //redundant file.close()
+  file.close();
+
+  Serial.print("  --- Done reading "); Serial.print(fileName); Serial.print(", took ");
+  Serial.print(millis() - msTemp); Serial.println("ms.");
+  
+}
+
+
+void sdDateTime(uint16_t* sd_date, uint16_t* sd_time) {
+  uint16_t sd_year;
+  uint8_t sd_month, sd_day, sd_hour, sd_minute, sd_second;
+  // User gets date and time from GPS or real-time clock here
+
+  Serial.print(F(" -sdDateTime called-" )); Serial.print(getTimeWithZeros());
+
+  sd_year   = year();
+  sd_month  = month();
+  sd_day    = day();
+  sd_hour   = hour();
+  sd_minute = minute();
+  sd_second = second();
+  
+  // return date using FAT_DATE macro to format fields
+  *sd_date = FAT_DATE(sd_year, sd_month, sd_day);
+  // return time using FAT_TIME macro to format fields
+  *sd_time = FAT_TIME(sd_hour, sd_minute, sd_second);
+}
+
+
+
+
+
+// END OF FILE
