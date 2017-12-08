@@ -106,10 +106,10 @@ void put_humid2(byte m, float h) {
   wxCache[m].humid2 = round(h);
 }
 
-//Volt2 is the voltage on the battery. Can save between 10.0 and 15.0 volts in 2/100ths 
+//vBatt is the voltage on the battery. Can save between 10.0 and 15.0 volts in 2/100ths 
 // subtract 10 and multiply by 50
 // m = minute, t = temperature (in F)
-void put_volt2(byte m, float v) {
+void put_vBatt(byte m, float v) {
   m = m % 60;
   // if Volts are negative, flip positive, then bound between 10v-15v
   if (v <  0) v = v * -1.0;
@@ -117,28 +117,28 @@ void put_volt2(byte m, float v) {
   if (v > 15) v = 15;
   v = v - 10;
   v = v * 50;
-  wxCache[m].volt2 = (byte)round(v);
+  wxCache[m].vBatt = (byte)round(v);
 }
 
-float get_volt2(byte m) {
+float get_vBatt(byte m) {
   m = m % 60;
-  float v = wxCache[m].volt2;
+  float v = wxCache[m].vBatt;
   return v / 50 + 10;
 }
 
 
-//Amp2 is milliamps to/from the battery. Positive is charging the battery.
-void put_amp2(byte m, float a) {
+//aBatt is milliamps to/from the battery. Positive is charging the battery.
+void put_aBatt(byte m, float a) {
   m = m % 60;
   if (a > 3550) a = 3550;
   if (a < -500) a = -500;
   a = a + 500.0;
-  wxCache[m].amp2 = round(a / 4.0);
+  wxCache[m].aBatt = round(a / 4.0);
 }
 
-int get_amp2(byte m) {
+int get_aBatt(byte m) {
   m = m % 60;
-  return (int)wxCache[m].amp2 * 4 - 500;
+  return (int)wxCache[m].aBatt * 4 - 500;
 }
 
 //Open the file, write the line of data, close the file.
@@ -149,6 +149,12 @@ void sdLogData(char *fileName, String logData) {
   msTemp = millis();
   usTemp = micros();
   Serial.print("Writing to SD file "); Serial.print(fileName); Serial.print("; ");
+
+  bool sdEnabledEthernet = false;
+  if (not ethEnabled) {
+    sdEnabledEthernet = true;
+    enableEthernet();
+  }
 
   // Open the file for writing, create if doesn't exist
   if (!file.open(fileName, O_CREAT | O_WRITE | O_APPEND)) {
@@ -170,9 +176,12 @@ void sdLogData(char *fileName, String logData) {
   sdPosition = file.curPosition();
   file.close();
 
-  Serial.print("done writing. Took ");
+  if (sdEnabledEthernet) disableEthernet();
+
+  Serial.print(F(" done writing. Took "));
   Serial.print(millis() - msTemp); Serial.print("ms, ");
-  Serial.print(micros() - usTemp); Serial.println("us.");
+  //Serial.print(micros() - usTemp); Serial.print("us. ");
+  Serial.print(F("file position: ")); Serial.println(sdPosition);
   Serial.println();
   
 }
@@ -214,6 +223,12 @@ void sdReadFileToSocket(char *fileName) {
 
   Serial.print("Dumping SD file to ethernet socket: "); Serial.println(fileName);
 
+  bool sdEnabledEthernet = false;
+  if (not ethEnabled) {
+    sdEnabledEthernet = true;
+    enableEthernet();
+  }
+
   //Open the file if it exists
   if (!file.open(fileName, O_READ)) {
     sdErr("file.open for read");
@@ -231,6 +246,8 @@ void sdReadFileToSocket(char *fileName) {
   //redundant file.close()
   file.close();
 
+  if (sdEnabledEthernet) disableEthernet();
+
   Serial.print("  --- Done reading "); Serial.print(fileName); Serial.print(", took ");
   Serial.print(millis() - msTemp); Serial.println("ms.");
   
@@ -242,7 +259,7 @@ void sdDateTime(uint16_t* sd_date, uint16_t* sd_time) {
   uint8_t sd_month, sd_day, sd_hour, sd_minute, sd_second;
   // User gets date and time from GPS or real-time clock here
 
-  Serial.print(F(" -sdDateTime called-" )); Serial.print(getTimeWithZeros());
+  Serial.print(F(" -sdDateTime- " )); Serial.print(getTimeWithZeros());
 
   sd_year   = year();
   sd_month  = month();
