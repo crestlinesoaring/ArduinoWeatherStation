@@ -4,8 +4,125 @@
  * 
  */
 
+/* Check for incoming data on the Ethernet server.
+ *  Typically stuff like reset requests, maybe update EEPROM values, print current data cache, etc...
+ */
+void checkEthIncomingData() {
+  if (wifiEnabled) {
+    msTemp = millis();
+    wdt_reset();
+    incomingClient = server.available();
+    if (incomingClient) {
+      Serial.println(F("  --=Ethernet client connected!!=-- "));
+      // Probably just waiting here is enough to cause a WatchDog reset, which is all we really need.
+      while (incomingClient.connected()) {
+        //Serial.print(F("Entering While incomingClient.connected() at ms: "));
+        //Serial.println(millis());
+        if (incomingClient.available()) {
+          char c = incomingClient.read();
+          char fileName[13];
+          String strFileName;
+          int i;
+          Serial.write(c);
+          incomingClient.print(c);
 
+          switch (c) {
+            case 'R': // for Reset
+              wdt_reset();
+              Serial.println(F("---===---===--- Client hit R and [enter], which causes the reboot ---===---===---"));
+              incomingClient.println(F("R and Enter detected. Rebooting and disconnecting."));
+              delay(100);
+              Serial.println(); Serial.print(" ");
+              i = 0;
+              while(true) { // this would surely cause a reboot, except we never seem to get here.
+                Serial.print(8);
+                Serial.print(i);
+                incomingClient.print(" ");
+                incomingClient.print(i);
+                i++;
+                delay(500);
+              } // End while (true) for loop until Watchdog Reset
+              break; // End of 'R'eset
+            case 'C': // for Cache, dump what cached data we have
+              incomingClient.println(F("C and Enter detected. Dumping what we have cached in memory. Be sure to disconnect."));
+              for (byte i=0; i < 10; i++) {
+                Serial.println(wxStringCache[i]);
+                incomingClient.print(i); incomingClient.print(": ");
+                incomingClient.println(wxStringCache[i]);
+              }
 
+              break; // End of 'C'ache
+            case 'D': // for Dump today's file to this socket.
+              incomingClient.println(F("D and Enter detected. Dumping today's data file to this socket. No reboot (hopefully)"));
+              strFileName = getDateWithZerosNoSeparator() + ".dat";
+              strFileName.toCharArray(fileName, 13);
+              
+              sdReadFileToSocket(fileName);
+              
+              incomingClient.println(F("---- Done dumping file"));
+              Serial.println(F("Done dumping file to Ethernet."));
+
+              break; // End of 'D'ump
+            case 'U': // for Toggle Ubiquiti keep-on (vs 5 minute Save & Send all day)
+              incomingClient.print(F("U detected, toggling Ubiquity to: "));
+              if (EEPROM.read(eeKeepUbiOn)) {
+                incomingClient.print(F("turn off, only on once every 5 minutes."));
+                keepUbiquitiOn = false;
+                EEPROM.update(eeKeepUbiOn, false);
+              } else {
+                incomingClient.println(F("stay on ALL DAY. Still turns off at night"));
+                keepUbiquitiOn = true;
+                EEPROM.update(eeKeepUbiOn, true);
+              }
+              break; // End of 'U'biquiti toggle
+            case 'B': // for turn Brain Box camera on
+              incomingClient.println(F("B detected, turning on BB camera on pin 12"));
+              digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
+              break;
+            case 'H': // for turn Hang Gliding camera on
+              incomingClient.println(F("H detected, turning on HG camera"));
+              digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+              break;
+            case 'P': // for turn Paragliding camera on
+              incomingClient.println(F("P detected, turning on PG camera"));
+              digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+              break;
+            case 'A': // for turn ALL cameras on
+              incomingClient.print(F("C detected, turning on all cameras"));
+              digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
+              delay(1000);
+              digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+              delay(1000);
+              digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+              incomingClient.println(F(" - DONE, all cameras powered."));
+              break;
+            case '?':   // HELP
+              // print help
+              incomingClient.println(F("Options:"));
+              incomingClient.println(F("R: Reset unit (watchdog reset)."));
+              incomingClient.println(F("C: Cache, print cached weather lines."));
+              incomingClient.println(F("D: Dump SD file for today (only valid if SD card exists)."));
+              incomingClient.println(F("U: Toggle ubiquiti between Always On and Off except for send every 5 minutes. Always off at night regardless."));
+              incomingClient.println(F("B: Camera in the Brain Box."));
+              incomingClient.println(F("H: Camera viewing the HG launch."));
+              incomingClient.println(F("P: Camera viewing the PG launch."));
+              incomingClient.println(F("A: All Cameras (Brain Box, HG, PG)."));
+              incomingClient.println(F(""));
+              break;
+          }
+        }
+        incomingClient.stop();
+      }
+      delay(3);
+      incomingClient.stop();
+      Serial.println();
+      Serial.print(F("Incoming client disconnected after "));
+      Serial.print(millis() - msTemp);
+      Serial.println("ms.");
+    }
+  } // End of incoming Ethernet connection handling
+
+}
 
 // Turns on power for components needed for network connectivity
 void enableEthernet() {
@@ -15,24 +132,11 @@ void enableEthernet() {
 
   //enableWifi();   //We do this separately now, so we can write to an SD card without turning on the wifi.
 
-  PrintSpiPinMode();
-  
-  Serial.println();
-  Serial.print(getTimeWithZeros());
-  Serial.print(F(": enableEthernet() called, startup delay 2 seconds:  0"));
-
-  // Re-enable the pins that were disabled during power save.
-  pinMode(SS,   OUTPUT);
-  //pinMode(SCK,  OUTPUT);
-  //pinMode(MISO, OUTPUT);
-  //pinMode(MOSI, OUTPUT);
-
-  SPI.begin();
-
+//jjj20f first turn Ethernet shield on
   pinMode(PIN_ETH_CONTROL, OUTPUT);                     // prepares ETH power control pin
   digitalWrite(PIN_ETH_CONTROL, ETH_ENABLED);           // turns ETH shield on
   
-  // ETH takes ~2 seconds to be ready to send when turned on
+  // ETH takes ~2 seconds to be ready to send when turned on // jjj 0 4 8 
   for (int i=0; i>0; i--) {
 
     // Count down the seconds on Serial. Character 8 is the backspace.
@@ -45,9 +149,31 @@ void enableEthernet() {
     wdt_reset();
     delay(1000);
   }
-  Serial.print("Ethernet.begin; ");
+
+  PrintSpiPinMode();
+  
+  Serial.println();
+  Serial.print(getTimeWithZeros());
+  Serial.println(F(": enableEthernet() called, startup delay ? seconds:  0")); //jjj ln, ?
+
+//jjj20f  Re-enable just in case the pins were disabled during power save.
+  pinMode(SS,   OUTPUT);
+  pinMode(SCK,  OUTPUT);
+  pinMode(MISO, INPUT);
+  pinMode(MOSI, OUTPUT);
+  digitalWrite (MISO, HIGH);    //jjj20f pullup
+  digitalWrite (SS, HIGH);      //jjj20f to select spi master
+//jjj20f   digitalWrite (SCK, LOW);     //jjj20f is low already
+//jjj20f   digitalWrite (MOSI, LOW);    //jjj20f  is low already
+//jjj20f SPI will be fully initialized by Ethernet.begin 
+
+  wdt_reset(); //jjj
+  Serial.println("Ethernet.begin; ");
   Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
-  Serial.print("server.begin(); ");
+    delay(1000); //jjj20d back to 1000 
+    W5100.setRetransmissionTime(0x07D0);  // reduce wait
+    W5100.setRetransmissionCount(4);
+  Serial.println("server.begin(); ");  //jjj ln
   server.begin();
   ethEnabled = true;
 
@@ -97,15 +223,22 @@ void disableEthernet() {
 
   //print the pinmodes first
   PrintSpiPinMode();
-                                             //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
-                                             //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
-  if (not wxOwner.equals("L")) {  // Crashes the sketch if you don't actually remove power from Ethernet Shield.
-    SPI.end();
+
+//jjj20f       Turn off Ethernet shield
+//             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
+//             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
+
+
+//  if (not wxOwner.equals("D")) {  // Crashes the sketch if you don't actually remove power from Ethernet Shield.
+
+// jjj turn off SPI machine 
+    SPI.end(); 
+//jjj20f turn off pins
     pinMode(MOSI, INPUT);                    //             prevents leakage through ESD diodes
     pinMode(MISO, INPUT);                    //             prevents leakage through ESD diodes
     pinMode(SCK,  INPUT);                    //             prevents leakage through ESD diodes
     pinMode(SS,   INPUT);                    //             prevents leakage through ESD diodes
-  }
+//  }
 
   pinMode(PIN_ETH_CONTROL, OUTPUT);                      // prepares ETH power control pin
   digitalWrite(PIN_ETH_CONTROL, ETH_DISABLED);           // turns ETH shield off

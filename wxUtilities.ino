@@ -9,7 +9,10 @@
 
 //Returns the voltage of the light sensor based on the 3.3V rail
 //This allows us to ignore what VCC might be (an Arduino plugged into USB has VCC of 4.5 to 5.2V)
-float get_light_level()
+/*
+ * //jjj not used
+ * 
+ float get_light_level()
 {
     float operatingVoltage = analogRead(REFERENCE_3V3);
     float lightSensor = analogRead(LIGHT);
@@ -19,12 +22,15 @@ float get_light_level()
 
     return(lightSensor);
 }
+ */
 
-//Returns the voltage of the raw pin based on the 3.3V rail
+///Returns the voltage of the raw pin based on the 3.3V rail
 //This allows us to ignore what VCC might be (an Arduino plugged into USB has VCC of 4.5 to 5.2V)
 //Battery level is connected to the RAW pin on Arduino and is fed through two 5% resistors:
 //3.9K on the high side (R1), and 1K on the low side (R2)
-float get_battery_level()
+/*
+ * //jjj not used
+ * float get_battery_level()
 {
     float operatingVoltage = analogRead(REFERENCE_3V3);
     float rawVoltage = analogRead(BATT);
@@ -35,7 +41,9 @@ float get_battery_level()
 
     return(rawVoltage);
 }
+ */
 
+ 
 //Returns the instataneous wind speed
 float get_wind_speed()
 {
@@ -62,23 +70,23 @@ int get_wind_direction()
     // Each threshold is the midpoint between adjacent headings. The output is degrees for that ADC reading.
     // Note that these are not in compass degree order! See Weather Meters datasheet for more information.
 
-    if      (adc < 81)   { strWindDir = "ERL"; return (-10); }
-    else if (adc < 162)  { strWindDir = "ESE"; return (113); }   // ESE
-    else if (adc < 188)  { strWindDir = "ENE"; return  (68); }   // ENE
-    else if (adc < 227)  { strWindDir = "E";   return  (90); }   // E
-    else if (adc < 305)  { strWindDir = "SSE"; return (158); }   // SSE
-    else if (adc < 395)  { strWindDir = "SE";  return (135); }   // SE
-    else if (adc < 466)  { strWindDir = "SSW"; return (203); }   // SSW
-    else if (adc < 559)  { strWindDir = "S";   return (180); }   // S
-    else if (adc < 651)  { strWindDir = "NNE"; return  (23); }   // NNE
-    else if (adc < 733)  { strWindDir = "NE";  return  (45); }   // NE
-    else if (adc < 800)  { strWindDir = "WSW"; return (248); }   // WSW
-    else if (adc < 835)  { strWindDir = "SW";  return (225); }   // SW
-    else if (adc < 883)  { strWindDir = "NNW"; return (338); }   // NNW
-    else if (adc < 919)  { strWindDir = "N";   return   (0); }   // N
-    else if (adc < 945)  { strWindDir = "WNW"; return (293); }   // WNW
-    else if (adc < 974)  { strWindDir = "NW";  return (315); }   // NW
-    else if (adc < 1005) { strWindDir = "W";   return (270); }   // W
+    if      (adc <   81 )  { strWindDir = "ERL"; return (-10); }
+    else if (adc <  186 )  { strWindDir = "ESE"; return (113); }   // ESE
+    else if (adc <  215 )  { strWindDir = "ENE"; return  (68); }   // ENE
+    else if (adc <  258 )  { strWindDir = "E";   return  (90); }   // E
+    else if (adc <  341 )  { strWindDir = "SSE"; return (158); }   // SSE
+    else if (adc <  436 )  { strWindDir = "SE";  return (135); }   // SE
+    else if (adc <  508 )  { strWindDir = "SSW"; return (203); }   // SSW
+    else if (adc <  600 )  { strWindDir = "S";   return (180); }   // S
+    else if (adc <  689 )  { strWindDir = "NNE"; return  (23); }   // NNE
+    else if (adc <  766 )  { strWindDir = "NE";  return  (45); }   // NE
+    else if (adc <  827 )  { strWindDir = "WSW"; return (248); }   // WSW
+    else if (adc <  859 )  { strWindDir = "SW";  return (225); }   // SW
+    else if (adc <  902 )  { strWindDir = "NNW"; return (338); }   // NNW
+    else if (adc <  934 )  { strWindDir = "N";   return   (0); }   // N
+    else if (adc <  957 )  { strWindDir = "WNW"; return (293); }   // WNW
+    else if (adc <  982 )  { strWindDir = "NW";  return (315); }   // NW
+    else if (adc <  1008)  { strWindDir = "W";   return (270); }   // W
     else                 { strWindDir = "ERH"; return (-10); }
     return (-10); // Never get here
 }
@@ -259,10 +267,10 @@ void calcWeather()
     //Calc dewptf
 
     //Calc light level
-    light_lvl = get_light_level();
+//jjjm       light_lvl = get_light_level();
 
     //Calc battery level
-    batt_lvl = get_battery_level();
+//jjjm       batt_lvl = get_battery_level();
     
 }
 
