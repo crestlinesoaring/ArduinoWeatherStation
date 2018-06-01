@@ -1,6 +1,6 @@
 /*
  * 
- * Functions for handling time related duties. Like NTP.
+ * Functions for handling time and some network related duties. Like NTP.
  * 
  */
 
@@ -10,6 +10,7 @@
 void checkEthIncomingData() {
   if (wifiEnabled) {
     msTemp = millis();
+    bool timeoutWarningGiven = false;
     wdt_reset();
     incomingClient = server.available();
     if (incomingClient) {
@@ -19,10 +20,12 @@ void checkEthIncomingData() {
         //Serial.print(F("Entering While incomingClient.connected() at ms: "));
         //Serial.println(millis());
         if (incomingClient.available()) {
+          msTemp = millis();
           char c = incomingClient.read();
           char fileName[13];
           String strFileName;
           int i;
+          int rtcSetStatus;
           Serial.write(c);
           incomingClient.print(c);
 
@@ -43,6 +46,7 @@ void checkEthIncomingData() {
                 delay(500);
               } // End while (true) for loop until Watchdog Reset
               break; // End of 'R'eset
+              
             case 'C': // for Cache, dump what cached data we have
               incomingClient.println(F("C and Enter detected. Dumping what we have cached in memory. Be sure to disconnect."));
               for (byte i=0; i < 10; i++) {
@@ -52,6 +56,7 @@ void checkEthIncomingData() {
               }
 
               break; // End of 'C'ache
+              
             case 'D': // for Dump today's file to this socket.
               incomingClient.println(F("D and Enter detected. Dumping today's data file to this socket. No reboot (hopefully)"));
               strFileName = getDateWithZerosNoSeparator() + ".dat";
@@ -63,30 +68,35 @@ void checkEthIncomingData() {
               Serial.println(F("Done dumping file to Ethernet."));
 
               break; // End of 'D'ump
+              
             case 'U': // for Toggle Ubiquiti keep-on (vs 5 minute Save & Send all day)
               incomingClient.print(F("U detected, toggling Ubiquity to: "));
               if (EEPROM.read(eeKeepUbiOn)) {
-                incomingClient.print(F("turn off, only on once every 5 minutes."));
+                incomingClient.println(F("turn off, only on once every 5 minutes."));
                 keepUbiquitiOn = false;
                 EEPROM.update(eeKeepUbiOn, false);
               } else {
-                incomingClient.println(F("stay on ALL DAY. Still turns off at night"));
+                incomingClient.println(F("stay on ALL DAY. Still turns off at night."));
                 keepUbiquitiOn = true;
                 EEPROM.update(eeKeepUbiOn, true);
               }
               break; // End of 'U'biquiti toggle
+              
             case 'B': // for turn Brain Box camera on
               incomingClient.println(F("B detected, turning on BB camera on pin 12"));
               digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
               break;
+              
             case 'H': // for turn Hang Gliding camera on
               incomingClient.println(F("H detected, turning on HG camera"));
               digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
               break;
+              
             case 'P': // for turn Paragliding camera on
               incomingClient.println(F("P detected, turning on PG camera"));
               digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
               break;
+              
             case 'A': // for turn ALL cameras on
               incomingClient.print(F("C detected, turning on all cameras"));
               digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
@@ -96,6 +106,46 @@ void checkEthIncomingData() {
               digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
               incomingClient.println(F(" - DONE, all cameras powered."));
               break;
+              
+            case 'N': // Force an NTP check to update the RTC
+              incomingClient.print(F("N detected, forcing an NTP check, time is: "));
+              incomingClient.println(getTimeWithZeros());
+              returnStatus = "";
+              compareRTCwithNTP();
+//              incomingClient.print(F("NTP time, raw: "));
+//              incomingClient.println(String(getNtpTime()));
+//              incomingClient.print(F("RTC time, raw: "));
+//              incomingClient.println(String(RTC.get()));
+              incomingClient.println();
+              incomingClient.print(F("NTP check finished. Time is: "));
+              incomingClient.println(getTimeWithZeros());
+              incomingClient.println(returnStatus);
+              break;
+              
+            case 'T':   // Add one hour to Time
+              incomingClient.print(("T detected, adding 3600 to time. Current is: "));
+              incomingClient.println(getTimeWithZeros());
+              rtcSetStatus = RTC.set(now() + 3600);
+              incomingClient.print(F("RTC is now set, return status: "));
+              incomingClient.print(rtcSetStatus);
+              incomingClient.print(F(" time is "));
+              incomingClient.println(getTimeWithZeros());
+              incomingClient.println();
+              incomingClient.println(F("---===  Note!! Takes 10 minutes for system time to update after RTC fix!! ===------"));
+              break;
+              
+            case 't':   // Add one hour to Time
+              incomingClient.print(("t detected, subtracting 3600 from time. Current is: "));
+              incomingClient.println(getTimeWithZeros());
+              rtcSetStatus = RTC.set(now() - 3600);
+              incomingClient.print(F("RTC is now set, return status: "));
+              incomingClient.print(rtcSetStatus);
+              incomingClient.print(F(" time is "));
+              incomingClient.println(getTimeWithZeros());
+              incomingClient.println();
+              incomingClient.println(F("---===  Note!! Takes 10 minutes for system time to update after RTC fix!! ===------"));
+              break;
+              
             case '?':   // HELP
               // print help
               incomingClient.println(F("Options:"));
@@ -107,13 +157,34 @@ void checkEthIncomingData() {
               incomingClient.println(F("H: Camera viewing the HG launch."));
               incomingClient.println(F("P: Camera viewing the PG launch."));
               incomingClient.println(F("A: All Cameras (Brain Box, HG, PG)."));
+              incomingClient.println(F("N: Force an NTP check to see if the RTC should be updated."));
+              incomingClient.println(F("T: Add one hour to RTC clock, for DST end in Fall. Takes 10 minutes to take effect!!"));
+              incomingClient.println(F("t: Subtract one hour from RTC clock, for DST begin in Spring. 10 minutes to take effect!!"));
               incomingClient.println(F(""));
               break;
           }
         }
-        incomingClient.stop();
+        wdt_reset();
+        if ((millis() - msTemp) > 20000) {
+          incomingClient.println("Idle timeout reached, DISCONNECTING.");
+          break;
+        } else if ((millis() - msTemp) > 10000) {
+          // Been 10 seconds with no input, give a warning
+          if (not timeoutWarningGiven) {
+            incomingClient.println("Idle timeout in 10 seconds....");
+            timeoutWarningGiven = true;
+          }
+        } else if (timeoutWarningGiven) {
+          // less than 10 secs but warning already given means timer was reset. Reset the warning too.
+          timeoutWarningGiven = false;
+        }
+        //incomingClient.stop();
       }
       delay(3);
+      incomingClient.println();
+      incomingClient.print(getTimeWithZeros());
+      incomingClient.println(": Ending Session. Goodbye!");
+      delay(10);
       incomingClient.stop();
       Serial.println();
       Serial.print(F("Incoming client disconnected after "));
@@ -123,6 +194,8 @@ void checkEthIncomingData() {
   } // End of incoming Ethernet connection handling
 
 }
+
+
 
 // Turns on power for components needed for network connectivity
 void enableEthernet() {
@@ -460,6 +533,60 @@ unsigned long sendNTPpacket(IPAddress address)
   Udp.endPacket();
   Serial.println(F("  UDP NTP packet sent from IPAddress (probably)."));
 }
+
+
+void compareRTCwithNTP() {
+  
+  //Compare RTC to NTP, to set the RTC.
+  unsigned int diffNTPRTC = 0;
+
+  if (CheckDST()) {
+    timeZone = -7;
+  } else {
+    timeZone = -8;
+  }
+
+  returnStatus += "TZ: ";
+  returnStatus += String(timeZone);
+  
+  time_t timeRTC = RTC.get();
+  time_t timeNTP = getNtpTime();
+  if ((timeRTC == 0) or (timeNTP == 0)) {
+    // RTC and NTP will both return zero on error. Don't bother if either one is invalid / unreadable.
+    diffNTPRTC = 0;
+    returnStatus += " RTC or NTP was 0. ";
+  } else if (timeNTP > timeRTC) {
+    diffNTPRTC = timeNTP - timeRTC;
+  } else {
+    diffNTPRTC = timeRTC - timeNTP;
+  }
+  if (diffNTPRTC > 0) {
+    returnStatus += F("NTP and RTC differ by ");
+    returnStatus += String(diffNTPRTC);
+    if (diffNTPRTC == 1) Serial.print(" second.");
+    if (diffNTPRTC >  1) Serial.print(" seconds.");
+    if (diffNTPRTC >  5) {
+      Serial.print("RTC time is ");
+      Serial.print(timeRTC);
+      Serial.print(", setting RTC to ");
+      Serial.print(timeNTP);
+      byte rtcSetStatus;
+      rtcSetStatus = RTC.set(timeNTP);
+      if (rtcSetStatus) {
+        Serial.print(" FAILED. Error code: ");
+        Serial.print(rtcSetStatus);
+        returnStatus += F(" - Failed! RTC status: ");
+        returnStatus += String(rtcSetStatus);
+      } else {
+        Serial.print(" done.");
+        setTime(timeNTP);
+        returnStatus += F("Done, RTC updated.");
+      }
+    }
+    Serial.println();
+  }
+}
+
 
 
 String getDateWithZeros() {

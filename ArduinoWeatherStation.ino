@@ -1,11 +1,11 @@
-const String wxVersion = "20t";
+const String wxVersion = "20x7";
 const bool disableNTP = true;             // Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 20t 2018/02/22) starting at ms ";
+const String startupMessage = "UM Weather Station (ver 20x7 2018/03/26) starting at ms ";
 const byte wifiStartupDelay = 55;         // Seconds to wait for Ubiquity Wifi startup
-const int minutesBeforeSunrise = 120;     // Minutes before sunrise to wake and start sending data.
-const int minutesAfterSunset = 45;        // Minutes after sunset to stay awake before sleep().
-//#define TENMINUTEDAY                    // Switches between night and day every 10 minutes.
+const int minutesBeforeSunrise = 30;       // Minutes before sunrise to wake and start sending data.
+const int minutesAfterSunset = 30;       // Minutes after sunset to stay awake before sleep().
+//#define TENMINUTEDAY                      // Switches between night and day every 10 minutes.
 
 
 #include <avr/wdt.h>   // WatchDog Timer. If I hit an endless loop, reset.
@@ -47,24 +47,25 @@ BME280 bme280b;                              // Second bme280 sensor: B
 // 67-70 Watchdog time_t
 //    71 Ubiquiti stay-on flag
 //
-//    80 uInt Boot-up counter
-//    82 uInt watchdog counter
-//    84 uInt sleep counter
+//    80-81 uInt Boot-up counter
+//    82-83 uInt watchdog counter
+//    84-85 uInt sleep counter
 //
 // RTC USED ADDRESSES:
-//    00 rtcWindSpeed, keep the windspeed so we can resume the MMA after a reboot
+//   0x0B rtcWindSpeed, keep the windspeed so we can resume the MMA after a reboot
 //
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 const int eePowerSave = 65; ///jjji go beyond ariadnes 64 bytes
 const int eeWatchdog = 66;
-const int eeWatchdogTime = 67;
+const int eeWatchdogTime = 67;    // to 70 - four bytes
 const int eeKeepUbiOn = 71;
-const int eeBootCounter = 80;
-const int eeWatchdogCounter = 82;
-const int eeSleepCounter = 84;
-unsigned int eeUIntTemp = 0;
-const byte rtcWindSpeed = 0x0B;
+const int eeTransmitInterval = 72;
+const int eeBootCounter = 80;     // to 81 - two bytes
+const int eeWatchdogCounter = 82; // to 83 - two bytes
+const int eeSleepCounter = 84;    // to 85 - two bytes
+
+unsigned int eeUIntTemp = 0;      // Not a memory location, just an int so we write whole ints to eeprom.
 
 struct eeFlags {
   bool powerSave : 1;
@@ -77,13 +78,49 @@ struct eeFlags {
   bool flag8     : 1;
 };
 
+
+/* DS3232 Register Addresses
+   RTC_SECONDS   0x00
+   RTC_MINUTES   0x01
+   RTC_HOURS     0x02
+   RTC_DAY       0x03
+   RTC_DATE      0x04
+   RTC_MONTH     0x05
+   RTC_YEAR      0x06
+   ALM1_SECONDS  0x07
+   ALM1_MINUTES  0x08
+   ALM1_HOURS    0x09
+   ALM1_DAYDATE  0x0A
+   ALM2_MINUTES  0x0B  //Stolen for windspeed
+   ALM2_HOURS    0x0C
+   ALM2_DAYDATE  0x0D
+   RTC_CONTROL   0x0E
+   RTC_STATUS    0x0F
+   RTC_AGING     0x10
+   RTC_TEMP_MSB  0x11
+   RTC_TEMP_LSB  0x12
+ */
+
+// Store windspeed in the RTC's NVRAM every minute so we can report sensible windspeed immediately after a reboot.
+// This would burn up eeprom eventually, so we use the RTC's very very limited nvram.
+// Overwriting the ALARM2 minutes location (0x0B) since we don't use ALARM2.
+const byte rtcWindSpeed = 0x0B;
+
+//bit cheat-sheet: 4=16, 5=32, 6=64, 7=128, 10=1024, 12=4096
+//(ab)using ALARM2 (0x0B-0x0D), we get 24 bits of NVRAM. NOT USED YET, just a framework.
+struct RTCmem {
+  byte         windSpeed       :  4;  // multiply by 2, stores up to 32
+  unsigned int batt_mAh        : 11;  // multiply by 3, stores up to 6,144 mAh discharge; zero = full charge.
+  unsigned int batt_lastminute :  9;  // multiply by 3, last minute battery discharge was updated, so we can catch-up on sleep expenditures by estimating usage.
+};
+
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 //Global Variables
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 unsigned long lastSecond;   //The millis counter to see when a second rolls by
 unsigned long loopCounter;  //see how often we loop
-unsigned long loopDelta;    //see how many loops since the last printu
+unsigned long loopDelta;    //see how many loops since the last print
 unsigned long msTemp;       //store millis() now and then to see how long something took, for Serial.print()s all over
 unsigned long usTemp;       //store micros() now and then to see how long something took. Much smaller than millis!
 byte seconds;               //When it hits 60, increase the current minute
@@ -94,6 +131,7 @@ byte hours;
 int days;                   //Yes I'm optimistic
 int sunrise;                //Minutes after midnight for sunrise
 int sunset;                 //Minutes after midnight for sunset
+int minutesToday;           //Updated each minute to current time. In minutes.
 byte sunriseDay = 0;        //Day we last calculated sunrise/sunset for. If it's not today, calc again.
 byte lastRealMinute;        //Keep track of when it's a new minute() (Real time, not runtime). Used to check for second() == 0, but that's not reliable.
 bool justBooted = true;     //Some stuff settles after the first minute, so let's keep track of that.
@@ -121,6 +159,8 @@ const char charComma = ',';       //Save memory with Serial.print(charComma) ins
 long lastWindCheck = 0;
 volatile long lastWindIRQ = 0;
 volatile byte windClicks = 0;
+volatile byte pin18Clicks = 0;
+volatile byte pin19Clicks = 0;
 
 // For Marshall weather, keep track of and report the following:
 /*
@@ -231,12 +271,15 @@ struct wxCache_struct {
   unsigned int aBatt : 10;    //Milliamps for battery, / 4 (-500 to 3500ma)
   byte ws      : 6;    //Wind speed
   byte humid2  : 5;    //Humidity inside / 3.23
+  byte sent    : 1;    // Sent successfully? True / False.
+  // 4+4+8+8+8+10+6+5 = 53 = 7 bytes with 3 bits to spare. 
 };
 
 time_t wxCache_time;
 byte wxCache_count;
 byte wxCache_lastSaved;
 byte wxCache_lastSent;
+byte wxSendInterval = 5;   // Send every wxSendInterval minutes.
 #define WX_CACHE_MAX 60
 
 wxCache_struct wxCache[WX_CACHE_MAX];
@@ -245,6 +288,7 @@ wxCache_struct wxCache[WX_CACHE_MAX];
 
 String wxStringCache[10];
 String tempWeatherString;     // Once a minute we will compile a "WeatherString", this is the string that gets uploaded.
+String returnStatus;          // A global string to use for updating return statuses. This is poor form, but easier than learning pointers.
 
 
 //**************************
@@ -346,6 +390,16 @@ void wspeedIRQ()
     }
 }
 
+void pin18IRQ()
+{
+  pin18Clicks++;
+}
+
+void pin19IRQ()
+{
+  pin19Clicks++;
+}
+
 // Watchdog timer fired, let's record a little and report it next bootup.
 ISR(WDT_vect)
 {
@@ -413,13 +467,9 @@ void setup()
       EEPROM.update(eeKeepUbiOn, false);
     }
 
-    // Set the common GND source for "YYD-3" FET switches to LOW OUTPUT because it will need to be this way regardless of which bootup mode we're in
-//jjjold not needed since Brain2 (Nov2017) pin changes.    digitalWrite(30, LOW);                     //             must always be low
-//jjjold     pinMode(30, OUTPUT);                       //             common GND source for "YYD-3" FET switches.
-
     //Check whether the Ubiquiti should be left on all day or cycled off and only on to upload once every 5 minutes
     if (EEPROM.read(eeKeepUbiOn)) {
-      keepUbiquitiOn = false; // jjj      keepUbiquitiOn = true;
+      keepUbiquitiOn = true;
     }
 
     // Increment a boot counter. We'd like an idea of how often we're booting, even if we don't know when necessarily.
@@ -448,9 +498,6 @@ void setup()
       disableWifi();
       disableEthernet();
 
-      //Can't do this, it will set off the Watchdog. We can discuss disabling the watchdog, but I consider this a poor way to accomplish this task.
-      //delay(30000);                            //             give eth and U 30 seconds time to boot up (better would be to  ping!)
- 
     }
     Serial.println("Done.");
     Serial.println();
@@ -503,6 +550,8 @@ void setup()
     // attach external interrupt pins to IRQ functions
     attachInterrupt(0, rainIRQ, FALLING);
     attachInterrupt(1, wspeedIRQ, FALLING);
+    attachInterrupt(digitalPinToInterrupt(18), pin18IRQ, FALLING);
+    attachInterrupt(digitalPinToInterrupt(19), pin19IRQ, FALLING);
 
     // turn on interrupts
     interrupts();
@@ -584,6 +633,7 @@ void setup()
     }
 
     if (timeStatus() == timeSet) {
+      minutesToday = hour() * 60 + minute();
       if (CheckDST()) {
         timeZone = -7;
       } else {
@@ -615,16 +665,15 @@ void setup()
 void loop()
 {
 
-  //Check for incoming Ethernet connections. So far, this is only "connecing to reset". Not much happens.
+  //Check for incoming Ethernet connections to the open socket - telnet port 23537
   if (wifiEnabled) {
     checkEthIncomingData();
-  } // End of incoming Ethernet connection handling
-
+  }
   
   //Do "once a second stuff", mostly weather. Also keep track of which minute it is.
   int elapsedMillis = millis() - lastSecond;
   if( elapsedMillis >= 1000 ) {
-    digitalWrite(STAT1, HIGH); //Blink stat LED to show how long we're doing the "once a second" work
+    //digitalWrite(STAT1, HIGH); //Blink stat LED to show how long we're doing the "once a second" work
 
     // add one second for every 1000 ms that have passed
     lastSecond += 1000 * (int)(elapsedMillis / 1000);
@@ -673,9 +722,7 @@ void loop()
         enableEthernet(); //? added here is it ok? jjj20f
         wifiStartTime = 0;
         wifiEnabled = true;
-      } else {
-        //Serial.println();
-      }
+      } 
     }
 
     // Once-a-minute tasks; seconds are incremented at the top of loop() and may be > 59 until we get here. Hope that's okay!
@@ -708,51 +755,21 @@ void loop()
 
         //Compare RTC to NTP, to set the RTC. Used to check every 10 minutes, now let's just check once an hour at :15 after.
         if (minute() == 15) {
-          unsigned int diffNTPRTC = 0;
-          time_t timeRTC = RTC.get();
-          time_t timeNTP = getNtpTime();
-          if ((timeRTC == 0) or (timeNTP == 0)) {
-            // RTC and NTP will both return zero on error. Don't bother if either one is invalid / unreadable.
-            diffNTPRTC = 0;
-          } else if (timeNTP > timeRTC) {
-            diffNTPRTC = timeNTP - timeRTC;
-          } else {
-            diffNTPRTC = timeRTC - timeNTP;
-          }
-          if (diffNTPRTC > 0) {
-            Serial.print(F("NTP and RTC differ by "));
-            Serial.print(diffNTPRTC);
-            if (diffNTPRTC == 1) Serial.print(" second.");
-            if (diffNTPRTC >  1) Serial.print(" seconds.");
-            if (diffNTPRTC >  5) {
-              Serial.print("RTC time is ");
-              Serial.print(timeRTC);
-              Serial.print(", setting RTC to ");
-              Serial.print(timeNTP);
-              byte rtcSetStatus;
-              rtcSetStatus = RTC.set(timeNTP);
-              if (rtcSetStatus) {
-                Serial.print(" FAILED. Error code: ");
-                Serial.print(rtcSetStatus);
-              } else {
-                Serial.print(" done.");
-                setTime(timeNTP);
-              }
-            }
-            Serial.println();
-          }
-          if (CheckDST()) {
-            timeZone = -7;
-          } else {
-            timeZone = -8;
-          }
+          compareRTCwithNTP();
+          Serial.println(returnStatus);
         } // END of once an hour on :15, while the correct date & time are known
       } else if (timeStatus() == timeNeedsSync) {
         //If we don't have valid time, check for time every 2 minutes. Otherwise it's normally once an hour.
         setSyncInterval(120);
         logSome(" time sync lost, interval set to 120s. ");
         
-      } // END of timeStatus() == timeSet
+      } else if (timeStatus() == timeNotSet) {
+        if (ina219b_volts > 13.8) {
+          logSome(F(" time still not set, enabling wifi & ethernet"));
+          enableWifi();
+          enableEthernet();
+        }
+      }  // END of timeStatus() == timeSet
 
       // Check every minute that we know sunrise/sunset for today. If not, calculate it (roughly).
 
@@ -772,7 +789,7 @@ void loop()
       *  P O W E R   S A V E
       * * * * * * * * * * * * * * * * * */
       // Turn off / on some peripherals at night & morning
-      int minutesToday = hour() * 60 + minute();
+      minutesToday = hour() * 60 + minute();
 
 #ifdef TENMINUTEDAY
       Serial.println(F("   !!DEBUG: Cycling to NIGHT every TEN minutes because of ""#define TENMINUTEDAY"""));
@@ -815,8 +832,8 @@ void loop()
           // shut down or power down external peripherals
           // should be done at some point by (de-)powering with Mega's pins
 
-          // Morning: don't go back to sleep if it's within an hour of Wake time, because we only wake once an hour.
-          if ((minutesToday < sunrise - minutesBeforeSunrise - 60) or (minutesToday > sunset)) {
+          // Morning: don't go back to sleep if it's within 40 minutes of Wake time, because we only wake once an hour.
+          if ((minutesToday < sunrise - minutesBeforeSunrise - 40) or (minutesToday > sunset)) {
 
             // Increment a sleep counter so we have an idea of how often we go to sleep.
             EEPROM.get(eeSleepCounter, eeUIntTemp);
@@ -1089,7 +1106,7 @@ void loop()
     // At the end of the second, let the minute roll over. This lets us do "new minute" stuff exactly
     // once a minute, without depending on having a loop() every second in case of long Ethernet timeouts.
     // previously we checked if(second() == 0), but that's not reliable and we could miss a minute.
-    digitalWrite(STAT1, LOW);    //Turn off WeatherShield's blue stat LED
+    //digitalWrite(STAT1, LOW);    //Turn off WeatherShield's blue stat LED
     
   } // END of ONCE A SECOND loop (every 1000ms)
 
@@ -1139,7 +1156,6 @@ void loop()
 
     float ina219a_polarity = 1.0;
   
-    // * -1 because this one's wired backwards for convenience.
     shuntvoltage = ina219a.getShuntVoltage_mV();
     busvoltage = ina219a.getBusVoltage_V();
     ina219_MMAtemp = busvoltage + (shuntvoltage / 1000.0);
@@ -1466,7 +1482,7 @@ String getWeatherString() {
     if (minutes <  10) weatherString += String('0');
     weatherString += String(minutes);
   } else {
-    if ((hours * 60) + minutes < 100) weatherString += String('0');
+    //if ((hours * 60) + minutes < 100) weatherString += String('0');
     if ((hours * 60) + minutes <  10) weatherString += String('0');
     weatherString += String((hours * 60) + minutes);
   }
@@ -1559,6 +1575,19 @@ String getWeatherString() {
   // Tack on a ,R if we've rebooted to make it easier to spot them
   if(justRestarted) {
     weatherString += ",R";
+    if (rainin) {
+      weatherString += ",p02-";
+      weatherString += String(rainin);
+    }
+    if (pin18Clicks) {
+      weatherString += ",p18-";
+      weatherString += String(pin18Clicks);
+    }
+    if (pin19Clicks) {
+      weatherString += ",p19-";
+      weatherString += String(pin19Clicks);
+    }
+
   }
 
   weatherString.replace(" ", "");

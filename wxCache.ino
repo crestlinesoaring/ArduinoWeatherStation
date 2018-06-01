@@ -108,7 +108,7 @@ void put_humid2(byte m, float h) {
 
 //vBatt is the voltage on the battery. Can save between 10.0 and 15.0 volts in 2/100ths 
 // subtract 10 and multiply by 50
-// m = minute, t = temperature (in F)
+// m = minute, v = voltage
 void put_vBatt(byte m, float v) {
   m = m % 60;
   // if Volts are negative, flip positive, then bound between 10v-15v

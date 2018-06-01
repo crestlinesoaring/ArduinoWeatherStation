@@ -7,42 +7,6 @@
 
 
 
-//Returns the voltage of the light sensor based on the 3.3V rail
-//This allows us to ignore what VCC might be (an Arduino plugged into USB has VCC of 4.5 to 5.2V)
-/*
- * //jjj not used
- * 
- float get_light_level()
-{
-    float operatingVoltage = analogRead(REFERENCE_3V3);
-    float lightSensor = analogRead(LIGHT);
-
-    operatingVoltage = 3.3 / operatingVoltage; //The reference voltage is 3.3V
-    lightSensor = operatingVoltage * lightSensor;
-
-    return(lightSensor);
-}
- */
-
-///Returns the voltage of the raw pin based on the 3.3V rail
-//This allows us to ignore what VCC might be (an Arduino plugged into USB has VCC of 4.5 to 5.2V)
-//Battery level is connected to the RAW pin on Arduino and is fed through two 5% resistors:
-//3.9K on the high side (R1), and 1K on the low side (R2)
-/*
- * //jjj not used
- * float get_battery_level()
-{
-    float operatingVoltage = analogRead(REFERENCE_3V3);
-    float rawVoltage = analogRead(BATT);
-
-    operatingVoltage = 3.30 / operatingVoltage; //The reference voltage is 3.3V
-    rawVoltage = operatingVoltage * rawVoltage; //Convert the 0 to 1023 int to actual voltage on BATT pin
-    rawVoltage *= 4.90; //(3.9k+1k)/1k - multiple BATT voltage by the voltage divider to get actual system voltage
-
-    return(rawVoltage);
-}
- */
-
  
 //Returns the instataneous wind speed
 float get_wind_speed()
@@ -87,7 +51,7 @@ int get_wind_direction()
     else if (adc <  957 )  { strWindDir = "WNW"; return (293); }   // WNW
     else if (adc <  982 )  { strWindDir = "NW";  return (315); }   // NW
     else if (adc <  1008)  { strWindDir = "W";   return (270); }   // W
-    else                 { strWindDir = "ERH"; return (-10); }
+    else                   { strWindDir = "ERH"; return (-10); }
     return (-10); // Never get here
 }
 
@@ -164,6 +128,137 @@ void disableSolar() {
   digitalWrite(PIN_SOLAR_CONTROL, SOLAR_DISCONNECTED);    // turns Solar Panel off
 
 }
+
+void enableCam12() {
+  Serial.println(F("Enabling Cam12"));
+  digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
+}
+
+void goToSleep(){
+  //jjjsleep 
+  //jjj Sleep turns all Mega pins to output and to low (except inverted default "on" (Eth and U), and MWX sensor pins)
+  //jjj sets Mega to it's lowest power state and disables interrupts. Only a reset (Pboot) brings it back to life.
+  //jjj decision of when to sleep must take into account the Pboot time.
+  // If Pboot time is earlier than "sunrise-1h", then sleep should not be called for the last hour.
+  // begin of sleep
+  // shut down or power down external peripherals
+  // should be done at some point by (de-)powering with Mega's pins
+
+  // Morning: don't go back to sleep if it's within an hour of Wake time, because we only wake once an hour.
+  if ((minutesToday < sunrise - minutesBeforeSunrise - 40) or (minutesToday > sunset)) {
+
+    // Increment a sleep counter so we have an idea of how often we go to sleep.
+    EEPROM.get(eeSleepCounter, eeUIntTemp);
+    EEPROM.put(eeSleepCounter, eeUIntTemp + 1);
+
+    ina219a.enterPowerSave();       //jjj powering down two INAs saves 2mA
+    ina219b.enterPowerSave();
+
+    // We set the sensor in "forced mode" to force one reading.
+    // After the reading the sensor will go to sleep mode.
+    uint8_t valuea = bme280a.readRegister(BME280_CTRL_MEAS_REG);
+    valuea = (valuea & 0xFC) + 0x01;
+    bme280a.writeRegister(BME280_CTRL_MEAS_REG, valuea);
+    uint8_t valueb = bme280b.readRegister(BME280_CTRL_MEAS_REG);
+    valueb = (valueb & 0xFC) + 0x01;
+    bme280b.writeRegister(BME280_CTRL_MEAS_REG, valueb);
+    // Measurement Time (as per BME280 datasheet section 9.1)
+    //  ~ 9.3ms for current settings
+    delay(10);
+  
+  // power down EEPROM? and RTC?
+  
+  // allpinslow turns all Mega pins to output and to low. Except inverted default "on" (Eth and U), and MWX sensor pins (input)
+    Serial.println(F("GOING TO SLEEP!!"));  // print this before messing with pins
+    Serial.flush(); //jjj wait for message to print 
+    Serial.end();   //jjj turn off TX0 so 16U2 ESD won't get pulled high
+  
+    cli();  //jjj clear interrupts just in case
+  
+  // turn off power to SD in case it was left on
+    delay(500);                              //jjjSD wait for a second for SD card closure
+    PORTF &= ~_BV (7) & ~_BV (6) & ~_BV (4) &~_BV (2) & ~_BV (1) & ~_BV (0);  //jjj turn off (0V) A5 to A7 and all other SD pins to unpower SD card reader
+  
+    // Analog pins, set pins to output to prevent floating inputs
+    pinMode(A0, OUTPUT);
+    pinMode(A1, OUTPUT);
+    pinMode(A2, OUTPUT);
+    pinMode(A3, OUTPUT);
+    pinMode(A4, OUTPUT);
+    pinMode(A5, OUTPUT);
+    pinMode(A6, OUTPUT);
+    pinMode(A7, OUTPUT);
+    pinMode(A8, OUTPUT);
+    pinMode(A9, OUTPUT);
+    pinMode(A10, OUTPUT);
+    pinMode(A11, OUTPUT);
+    pinMode(A12, OUTPUT);
+    pinMode(A13, OUTPUT);
+    pinMode(A14, OUTPUT);
+    pinMode(A15, OUTPUT);
+  
+    digitalWrite(A0, LOW);
+    digitalWrite(A1, LOW);
+    digitalWrite(A2, LOW);
+    digitalWrite(A3, LOW);
+    digitalWrite(A4, LOW);
+    digitalWrite(A5, LOW);
+    digitalWrite(A6, LOW);
+    digitalWrite(A7, LOW);
+    digitalWrite(A8, LOW);
+    digitalWrite(A9, LOW);
+    digitalWrite(A10, LOW);
+    digitalWrite(A11, LOW);
+    digitalWrite(A12, LOW);
+    digitalWrite(A13, LOW);
+    digitalWrite(A14, LOW);
+    digitalWrite(A15, LOW);
+    pinMode(WSPEED, INPUT);         //jjj MWX sensor, external pullup attached, stable
+    pinMode(WDIR, INPUT);           //jjj MWX sensor, external pullup attached, stable
+  
+    // Digital pins
+    Wire.end();                     //jjj just to make sure i2c won't pullup
+    pinMode(SCL, INPUT);            //jjj external pullup attached, stable
+    pinMode(SDA, INPUT);            //jjj external pullup attached, stable
+  
+  
+    for (int i = 0; i <= 53; i++) 
+    {
+      pinMode(i, OUTPUT);           //jjj set pins to output to prevent floating inputs
+      if (PIN_ETH_CONTROL == i) 
+        {
+          digitalWrite(i, HIGH);    //jjj is inverted, must be high
+        }
+      else if (PIN_UBIQUITI_CONTROL == i) 
+        {
+          digitalWrite(i, HIGH);    //jjj is inverted, must be high
+        }
+      else 
+        {
+          digitalWrite(i, LOW);     //jjj all others = LOW   
+        }
+  
+    }
+  
+    cli();  //jjj clear interrupts just in case
+  
+    ADCSRA = 0; //jjj disable ADC before freezing it below
+    set_sleep_mode(SLEEP_MODE_PWR_DOWN);  // prepare the sleep mode
+    power_all_disable();                  // turn off all internal peripherals just in case
+    power_adc_disable();                  // turn off all internal peripherals just in case
+    power_spi_disable();
+    power_usart0_disable();
+    power_usart2_disable();
+    power_timer1_disable();
+    power_timer2_disable();
+    power_timer3_disable();
+    power_timer4_disable();
+    power_timer5_disable();
+    power_twi_disable();
+  
+    sleep_mode();       // finally, go to sleep
+  }
+} // end of sleep: Wakes only by reset until interrupts are set
 
 
 
