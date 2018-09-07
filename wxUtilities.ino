@@ -129,10 +129,7 @@ void disableSolar() {
 
 }
 
-void enableCam12() {
-  Serial.println(F("Enabling Cam12"));
-  digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
-}
+
 
 void goToSleep(){
   //jjjsleep 
@@ -150,6 +147,12 @@ void goToSleep(){
     // Increment a sleep counter so we have an idea of how often we go to sleep.
     EEPROM.get(eeSleepCounter, eeUIntTemp);
     EEPROM.put(eeSleepCounter, eeUIntTemp + 1);
+
+    // Turn off the cameras at night. This might change but for now we want to make sure they sleep when the Arduino does.
+    // This turns them off in a way where they won't turn back on in the morning! They must be manually turned back on each day, for now.
+    disableCam12();
+    disableCamPG();
+    disableCamHG();
 
     ina219a.enterPowerSave();       //jjj powering down two INAs saves 2mA
     ina219b.enterPowerSave();

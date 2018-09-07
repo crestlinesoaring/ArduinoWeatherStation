@@ -11,6 +11,7 @@ void checkEthIncomingData() {
   if (wifiEnabled) {
     msTemp = millis();
     bool timeoutWarningGiven = false;
+    bool boolQuitSession = false;
     wdt_reset();
     incomingClient = server.available();
     if (incomingClient) {
@@ -30,6 +31,11 @@ void checkEthIncomingData() {
           incomingClient.print(c);
 
           switch (c) {
+            case 'q':
+            case 'Q': // for quit/Quit
+              boolQuitSession = true;
+              break;
+            
             case 'R': // for Reset
               wdt_reset();
               Serial.println(F("---===---===--- Client hit R and [enter], which causes the reboot ---===---===---"));
@@ -83,30 +89,67 @@ void checkEthIncomingData() {
               break; // End of 'U'biquiti toggle
               
             case 'B': // for turn Brain Box camera on
-              incomingClient.println(F("B detected, turning on BB camera on pin 12"));
-              digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
+              if (EEPROM.read(eeCamBBenabled)) {
+                incomingClient.print(F("B detected, BB camera was ON, turning off BB camera..."));
+                //disableCamBB;
+                EEPROM.update(eeCamPGenabled, false);
+                digitalWrite(PIN_Cam12_CONTROL, Cam12_OFF);
+              } else {
+                incomingClient.print(F("B detected, BB camera was OFF, turning on BB camera..."));
+                //enableCamBB;                
+                EEPROM.update(eeCamBBenabled, true);
+                digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
+              }
+              incomingClient.println(F(" Done!"));
               break;
               
             case 'H': // for turn Hang Gliding camera on
-              incomingClient.println(F("H detected, turning on HG camera"));
-              digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+              if (EEPROM.read(eeCamHGenabled)) {
+                incomingClient.print(F("H detected, HG camera was ON, turning off HG camera..."));
+                //disableCamHG;
+                EEPROM.update(eeCamPGenabled, false);
+                digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
+              } else {
+                incomingClient.print(F("H detected, HG camera was OFF, turning on HG camera..."));
+                //enableCamHG;                
+                EEPROM.update(eeCamHGenabled, true);
+                digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+              }
+              incomingClient.println(F(" Done!"));
               break;
               
             case 'P': // for turn Paragliding camera on
-              incomingClient.println(F("P detected, turning on PG camera"));
-              digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+              if (EEPROM.read(eeCamPGenabled)) {
+                incomingClient.print(F("P detected, PG camera was ON, turning off PG camera..."));
+                //disableCamPG;
+                EEPROM.update(eeCamPGenabled, false);
+                digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
+              } else {
+                incomingClient.print(F("P detected, PG camera was OFF, turning on PG camera..."));
+                //enableCamPG;                
+                EEPROM.update(eeCamPGenabled, true);
+                digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+              }
+              incomingClient.println(F(" Done!"));
               break;
               
             case 'A': // for turn ALL cameras on
-              incomingClient.print(F("C detected, turning on all cameras"));
-              digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
-              delay(1000);
-              digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
-              delay(1000);
-              digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+              incomingClient.print(F("A detected, turning on all cameras... "));
+              enableCam12;
+              enableCamHG;
+              enableCamPG;
               incomingClient.println(F(" - DONE, all cameras powered."));
               break;
-              
+
+            case 'a': // for turn ALL cameras off
+              incomingClient.print(F("a detected, turning OFF all cameras... "));
+              disableCam12;
+              disableCamHG;
+              disableCamPG;
+              incomingClient.println(F(" - DONE, all cameras shut off."));
+              break;
+
+
             case 'N': // Force an NTP check to update the RTC
               incomingClient.print(F("N detected, forcing an NTP check, time is: "));
               incomingClient.println(getTimeWithZeros());
@@ -123,7 +166,7 @@ void checkEthIncomingData() {
               break;
               
             case 'T':   // Add one hour to Time
-              incomingClient.print(("T detected, adding 3600 to time. Current is: "));
+              incomingClient.print(("T detected, adding one hour to RTC time for Daylight Saving update. Current time is: "));
               incomingClient.println(getTimeWithZeros());
               rtcSetStatus = RTC.set(now() + 3600);
               incomingClient.print(F("RTC is now set, return status: "));
@@ -131,11 +174,11 @@ void checkEthIncomingData() {
               incomingClient.print(F(" time is "));
               incomingClient.println(getTimeWithZeros());
               incomingClient.println();
-              incomingClient.println(F("---===  Note!! Takes 10 minutes for system time to update after RTC fix!! ===------"));
+              incomingClient.println(F("---===  Note!! It takes 10 minutes for the system time to update after RTC fix!! ===------"));
               break;
               
             case 't':   // Add one hour to Time
-              incomingClient.print(("t detected, subtracting 3600 from time. Current is: "));
+              incomingClient.print(("t detected, subtracting one hour from time for Daylight Saving update. Current time is: "));
               incomingClient.println(getTimeWithZeros());
               rtcSetStatus = RTC.set(now() - 3600);
               incomingClient.print(F("RTC is now set, return status: "));
@@ -143,12 +186,57 @@ void checkEthIncomingData() {
               incomingClient.print(F(" time is "));
               incomingClient.println(getTimeWithZeros());
               incomingClient.println();
-              incomingClient.println(F("---===  Note!! Takes 10 minutes for system time to update after RTC fix!! ===------"));
+              incomingClient.println(F("---===  Note!! It takes 10 minutes for system time to update after RTC fix!! ===------"));
+              break;
+
+            case 'W': // for turn ALL cameras off
+              incomingClient.print(F("W detected, adding 15 minutes to morning wake-up time... "));
+              minutesBeforeSunrise = minutesBeforeSunrise + 15;
+              if (minutesBeforeSunrise > 120) { minutesBeforeSunrise = 120; }
+              eeCharTemp = minutesBeforeSunrise;
+              EEPROM.put(eeMinutesBeforeSunrise, eeCharTemp);
+              incomingClient.print(F(" - DONE, now waking up "));
+              incomingClient.print(minutesBeforeSunrise);
+              incomingClient.println(F(" minutes before sunrise."));
+              break;
+
+            case 'w': // for turn ALL cameras off
+              incomingClient.print(F("w detected, subtracting 15 minutes from morning wake-up time... "));
+              minutesBeforeSunrise = minutesBeforeSunrise - 15;
+              if (minutesBeforeSunrise < -120) { minutesBeforeSunrise = -120; }
+              eeCharTemp = minutesBeforeSunrise;
+              EEPROM.put(eeMinutesBeforeSunrise, eeCharTemp);
+              incomingClient.print(F(" - DONE, now waking up "));
+              incomingClient.print(minutesBeforeSunrise);
+              incomingClient.println(F(" minutes before sunrise."));
+              break;
+
+            case 'S': // for turn ALL cameras off
+              incomingClient.print(F("S detected, adding 15 minutes to night go-to-sleep time... "));
+              minutesAfterSunset = minutesAfterSunset + 15;
+              if (minutesAfterSunset > 120) { minutesAfterSunset = 120; }
+              eeCharTemp = minutesAfterSunset;
+              EEPROM.put(eeMinutesAfterSunset, eeCharTemp);
+              incomingClient.print(F(" - DONE, now going to sleep "));
+              incomingClient.print(minutesAfterSunset);
+              incomingClient.println(F(" minutes after sunset."));
+              break;
+
+            case 's': // for turn ALL cameras off
+              incomingClient.print(F("s detected, subtracting 15 minutes from night go-to-sleep time... "));
+              minutesAfterSunset = minutesAfterSunset - 15;
+              if (minutesAfterSunset < -120) { minutesAfterSunset = -120; }
+              eeCharTemp = minutesAfterSunset;
+              EEPROM.put(eeMinutesAfterSunset, eeCharTemp);
+              incomingClient.print(F(" - DONE, now going to sleep "));
+              incomingClient.print(minutesAfterSunset);
+              incomingClient.println(F(" minutes after sunset."));
               break;
               
             case '?':   // HELP
               // print help
               incomingClient.println(F("Options:"));
+              incomingClient.println(F("q or Q: Quit. Disconnects telnet session."));
               incomingClient.println(F("R: Reset unit (watchdog reset)."));
               incomingClient.println(F("C: Cache, print cached weather lines."));
               incomingClient.println(F("D: Dump SD file for today (only valid if SD card exists)."));
@@ -156,15 +244,34 @@ void checkEthIncomingData() {
               incomingClient.println(F("B: Camera in the Brain Box."));
               incomingClient.println(F("H: Camera viewing the HG launch."));
               incomingClient.println(F("P: Camera viewing the PG launch."));
-              incomingClient.println(F("A: All Cameras (Brain Box, HG, PG)."));
+              incomingClient.println(F("A: Turn ON all Cameras (Brain Box, HG, PG)."));
+              incomingClient.println(F("a: Turn OFF all Cameras (Brain Box, HG, PG)."));
               incomingClient.println(F("N: Force an NTP check to see if the RTC should be updated."));
               incomingClient.println(F("T: Add one hour to RTC clock, for DST end in Fall. Takes 10 minutes to take effect!!"));
-              incomingClient.println(F("t: Subtract one hour from RTC clock, for DST begin in Spring. 10 minutes to take effect!!"));
-              incomingClient.println(F(""));
+              incomingClient.println(F("t: Subtract one hour from RTC clock, for DST begin in Spring. Takes 10 minutes to take effect!!"));
+              incomingClient.println(F("W: Add 15 minutes to morning wake time."));
+              incomingClient.println(F("w: Subtract 15 minutes from morning wake time."));
+              incomingClient.println(F("S: Add 15 minutes to night go-to-sleep time."));
+              incomingClient.println(F("s: Subtract 15 minutes from night go-to-sleep time."));
+              incomingClient.println("");
+              incomingClient.print(F("Minutes before Sunrise: ")); incomingClient.println(minutesBeforeSunrise);
+              incomingClient.print(F("Minutes after Sunset:   ")); incomingClient.println(minutesAfterSunset);
+              //incomingClient.print(F("camStatus byte value:   ")); incomingClient.println(camStatus);
+              incomingClient.print(F("camStatus EEPROM value: ")); incomingClient.println(EEPROM.read(eeCamStatus));
+              incomingClient.print(F("CamHG desired on:       ")); incomingClient.println(EEPROM.read(eeCamHGenabled));
+              incomingClient.print(F("CamPG desired on:       ")); incomingClient.println(EEPROM.read(eeCamPGenabled));
+              incomingClient.print(F("CamBB desired on:       ")); incomingClient.println(EEPROM.read(eeCamBBenabled));
+              incomingClient.print(F("Ubiquity Keep On:       ")); incomingClient.println(EEPROM.read(eeKeepUbiOn));
+              incomingClient.println(startupMessage);
+              incomingClient.println("");
               break;
           }
         }
         wdt_reset();
+        if (boolQuitSession) {
+          incomingClient.println("Session quit, DISCONNECTING.");
+          break;
+        }
         if ((millis() - msTemp) > 20000) {
           incomingClient.println("Idle timeout reached, DISCONNECTING.");
           break;
@@ -342,6 +449,51 @@ void disableWifi() {
   wifiStartTime = 0;
 
 }
+
+// Camera control helper functions
+
+void enableCam12() {
+  Serial.println(F("Enabling Cam12"));
+  digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
+  camStatus.bbDesireOn = true;
+  EEPROM.update(eeCamBBenabled, true);
+  delay(200);
+}
+void disableCam12() {
+  Serial.println(F("Disabling Cam12"));
+  digitalWrite(PIN_Cam12_CONTROL, Cam12_OFF);
+  camStatus.bbDesireOn = false;
+  EEPROM.update(eeCamBBenabled, false);
+}
+
+void enableCamPG() {
+  Serial.println(F("Enabling CamPG"));
+  digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+  camStatus.pgDesireOn = true;
+  EEPROM.update(eeCamPGenabled, true);
+  delay(200);
+}
+void disableCamPG() {
+  Serial.println(F("Disabling CamPG"));
+  digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
+  camStatus.pgDesireOn = false;
+  EEPROM.update(eeCamPGenabled, false);
+}
+
+void enableCamHG() {
+  Serial.println(F("Enabling CamHG"));
+  digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+  camStatus.hgDesireOn = true;
+  EEPROM.update(eeCamHGenabled, true);
+  delay(200);
+}
+void disableCamHG() {
+  Serial.println(F("Disabling CamHG"));
+  digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
+  camStatus.hgDesireOn = false;
+  EEPROM.update(eeCamHGenabled, false);
+}
+
 
 //Prints to serial the pinmode of SPI pins. For debugging obviously.
 void PrintSpiPinMode() {

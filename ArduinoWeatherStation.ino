@@ -1,10 +1,10 @@
-const String wxVersion = "20x7";
+const String wxVersion = "21g";
 const bool disableNTP = true;             // Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 20x7 2018/03/26) starting at ms ";
+const String startupMessage = "UM Weather Station (ver 21g 2018/09/06) starting at ms ";
 const byte wifiStartupDelay = 55;         // Seconds to wait for Ubiquity Wifi startup
-const int minutesBeforeSunrise = 30;       // Minutes before sunrise to wake and start sending data.
-const int minutesAfterSunset = 30;       // Minutes after sunset to stay awake before sleep().
+int minutesBeforeSunrise = 30;       // Minutes before sunrise to wake and start sending data.
+int minutesAfterSunset = 30;       // Minutes after sunset to stay awake before sleep().
 //#define TENMINUTEDAY                      // Switches between night and day every 10 minutes.
 
 
@@ -50,6 +50,15 @@ BME280 bme280b;                              // Second bme280 sensor: B
 //    80-81 uInt Boot-up counter
 //    82-83 uInt watchdog counter
 //    84-85 uInt sleep counter
+//    86    Byte camera control (on/off, etc)
+//    87    CamHG desired to be on (true/false)
+//    88    CamPG desired to be on (true/false)
+//    89    CamBB desired to be on (true/false)
+//    90    Char minutes before Sunrise to wake, -120 to 120, Going negative means not to wake until after sunrise.
+//    91    Char minutes after  Sunset to sleep, -120 to 120. Going negative means go to sleep before sunset.
+//    107   CamHG desired to be on (true/false)
+//    109   CamPG desired to be on (true/false)
+//    111   CamBB desired to be on (true/false)
 //
 // RTC USED ADDRESSES:
 //   0x0B rtcWindSpeed, keep the windspeed so we can resume the MMA after a reboot
@@ -64,8 +73,16 @@ const int eeTransmitInterval = 72;
 const int eeBootCounter = 80;     // to 81 - two bytes
 const int eeWatchdogCounter = 82; // to 83 - two bytes
 const int eeSleepCounter = 84;    // to 85 - two bytes
+const int eeCamStatus = 86;
+const int eeCamHGenabled = 107;
+const int eeCamPGenabled = 109;
+const int eeCamBBenabled = 111;
+const int eeMinutesBeforeSunrise = 90; // Char, -120 to 120
+const int eeMinutesAfterSunset = 91;   // Char, -120 to 120
 
-unsigned int eeUIntTemp = 0;      // Not a memory location, just an int so we write whole ints to eeprom.
+unsigned int eeUIntTemp = 0;      // Not a memory location, just an int so we can easily write  ints to eeprom.
+byte eeByteTemp = 0;              // Not a memory location, just a byte so we can easily write bytes to eeprom.
+char eeCharTemp = 0;              // Not a memory location, just a char so we can easily write char (signed, -128 to 127) to eeprom.
 
 struct eeFlags {
   bool powerSave : 1;
@@ -78,6 +95,13 @@ struct eeFlags {
   bool flag8     : 1;
 };
 
+struct structCamStatus {
+  bool hgDesireOn : 1;
+  bool pgDesireOn : 1;
+  bool bbDesireOn : 1;
+};
+
+structCamStatus camStatus;
 
 /* DS3232 Register Addresses
    RTC_SECONDS   0x00
@@ -467,6 +491,32 @@ void setup()
       EEPROM.update(eeKeepUbiOn, false);
     }
 
+    if (EEPROM.read(eeCamStatus) == 255) {
+      Serial.println(F("EEPROM eeCamStatus was 255, is this a new Arduino? Setting to false (0)."));
+      EEPROM.update(eeCamStatus, false);
+    }
+    if (EEPROM.read(eeCamPGenabled) == 255) {
+      Serial.println(F("EEPROM eeCamPGenabled was 255, is this a new Arduino? Setting to false (0)."));
+      EEPROM.update(eeCamPGenabled, false);
+    }
+    if (EEPROM.read(eeCamHGenabled) == 255) {
+      Serial.println(F("EEPROM eeCamHGenabled was 255, is this a new Arduino? Setting to false (0)."));
+      EEPROM.update(eeCamHGenabled, false);
+    }
+    if (EEPROM.read(eeCamBBenabled) == 255) {
+      Serial.println(F("EEPROM eeCamBBenabled was 255, is this a new Arduino? Setting to false (0)."));
+      EEPROM.update(eeCamBBenabled, false);
+    }
+
+    if (EEPROM.read(eeMinutesBeforeSunrise) == 255) {
+      Serial.println(F("EEPROM eeMinutesBeforeSunrise was 255, is this a new Arduino? Setting to 30."));
+      EEPROM.put(eeMinutesBeforeSunrise, char(minutesBeforeSunrise));
+    }
+    if (EEPROM.read(eeMinutesAfterSunset) == 255) {
+      Serial.println(F("EEPROM eeMinutesAfterSunset was 255, is this a new Arduino? Setting to 30."));
+      EEPROM.put(eeMinutesAfterSunset, char(minutesAfterSunset));
+    }
+
     //Check whether the Ubiquiti should be left on all day or cycled off and only on to upload once every 5 minutes
     if (EEPROM.read(eeKeepUbiOn)) {
       keepUbiquitiOn = true;
@@ -493,14 +543,45 @@ void setup()
       isDaytime = true;
 
       // Now that we send every 5 minutes, don't turn on until it's time to turn on.
-      //enableWifi();
-      //enableEthernet();
-      disableWifi();
-      disableEthernet();
+      if (keepUbiquitiOn) {
+        enableWifi();
+        enableEthernet();
+      } else {
+        disableWifi();
+        disableEthernet();
+      }
 
     }
     Serial.println("Done.");
     Serial.println();
+
+    //Populate a struct with saved camera state so camera on/off (powered/unpowered) state can persist through pboots.
+    camStatus = EEPROM.get(eeCamStatus, camStatus);
+    if (EEPROM.read(eeCamPGenabled)) {
+      digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+    } else {
+      digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
+    }
+
+    if (EEPROM.read(eeCamHGenabled)) {
+      digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+    } else {
+      digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
+    }
+
+    if (EEPROM.read(eeCamBBenabled)) {
+      digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
+    } else {
+      digitalWrite(PIN_Cam12_CONTROL, Cam12_OFF);
+    }
+
+    //Populate the wake/sleep times
+    EEPROM.get(eeMinutesBeforeSunrise, eeCharTemp);
+    minutesBeforeSunrise = eeCharTemp;
+    EEPROM.get(eeMinutesAfterSunset, eeCharTemp);
+    minutesAfterSunset = eeCharTemp;
+    
+
 
 
     //Weather Station stuff
@@ -783,6 +864,20 @@ void loop()
         enableEthernet();
       }
 
+      // After 4:30pm, shut off the cameras and Ubiquiti-always-on setting
+      // Considering... between 10:00am and 4:30, turn them on? Not yet. Maybe later.
+      if ( (hour() == 16) and ((minute() == 29) or (minute() == 30)) ) {
+        keepUbiquitiOn = false;
+        EEPROM.update(eeKeepUbiOn, false);
+        disableCamPG();
+        disableCamHG();
+        disableCam12();
+      } else {
+        if (hour() > 9) {
+          // Placeholder for enable cameras.
+        }
+      }
+
     
      /* * * * * * * * * * * * * * * * * *
       *  P O W E R   S A V E
@@ -838,6 +933,11 @@ void loop()
             // Increment a sleep counter so we have an idea of how often we go to sleep.
             EEPROM.get(eeSleepCounter, eeUIntTemp);
             EEPROM.put(eeSleepCounter, eeUIntTemp + 1);
+
+            // Turn off the cameras at night. This might change but for now we want to make sure they sleep when the Arduino does.
+            disableCam12();
+            disableCamPG();
+            disableCamHG();
 
             ina219a.enterPowerSave();       //jjj powering down two INAs saves 2mA
             ina219b.enterPowerSave();
