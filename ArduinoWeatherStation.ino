@@ -1,7 +1,7 @@
-const String wxVersion = "21g";
+const String wxVersion = "21j";
 const bool disableNTP = true;             // Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 21g 2018/09/06) starting at ms ";
+const String startupMessage = "UM Weather Station (ver 21j 2018/09/13) starting at ms ";
 const byte wifiStartupDelay = 55;         // Seconds to wait for Ubiquity Wifi startup
 int minutesBeforeSunrise = 30;       // Minutes before sunrise to wake and start sending data.
 int minutesAfterSunset = 30;       // Minutes after sunset to stay awake before sleep().
@@ -99,6 +99,8 @@ struct structCamStatus {
   bool hgDesireOn : 1;
   bool pgDesireOn : 1;
   bool bbDesireOn : 1;
+  bool badWeather : 1;
+  byte padding    : 4;
 };
 
 structCamStatus camStatus;
@@ -257,7 +259,7 @@ float ina219a_MMAcurrentSum;
 float ina219a_MMAcurrentAvg;
 float ina219a_MMAvoltSum = 14.0*1024;  // Preload to 14.0 volts so the moving average doesn't take so long
 float ina219a_MMAvoltAvg;
-const int ina219a_MMAcount = 1024;
+const int ina219a_MMAcount = 512;
 
 float ina219b_volts;
 float ina219b_ma;
@@ -265,7 +267,7 @@ float ina219b_MMAcurrentSum;
 float ina219b_MMAcurrentAvg;
 float ina219b_MMAvoltSum = 14.0*1024;  // Preload to 14.0 volts so the moving average doesn't take so long
 float ina219b_MMAvoltAvg;
-const int ina219b_MMAcount = 1024;
+const int ina219b_MMAcount = 512;
 
 float shuntvoltage = 0;
 float busvoltage = 0;
@@ -866,16 +868,33 @@ void loop()
 
       // After 4:30pm, shut off the cameras and Ubiquiti-always-on setting
       // Considering... between 10:00am and 4:30, turn them on? Not yet. Maybe later.
-      if ( (hour() == 16) and ((minute() == 29) or (minute() == 30)) ) {
+      if ( (hour() == 16)
+      and ((minute() == 28) or (minute() == 29)) ) {
         keepUbiquitiOn = false;
         EEPROM.update(eeKeepUbiOn, false);
         disableCamPG();
         disableCamHG();
         disableCam12();
+      }
+
+      if (ina219b_ma < 100) {
+        // Keep track of minutes with battery drain; shut off cameras & full-time Ubiquiti
       } else {
-        if (hour() > 9) {
-          // Placeholder for enable cameras.
+        // reset some of the countdown timers.
+      }
+
+      // A short while after sunrise, turn the cameras on if charging conditions are good enough.
+      if (((hour() >= 9) and (hour() < 13))
+       and ((ina219a_ma > 600) and (ina219a_volts > 14))
+       or  (ina219a_volts > 16.0)
+       and not (camStatus.badWeather)) {
+        // If it's early enough in the day, and charging voltage is high enough, enable cameras.
+        if (keepUbiquitiOn == false) {
+          keepUbiquitiOn = true;
+          EEPROM.update(eeKeepUbiOn, true);
         }
+        enableCamPG();
+        enableCamHG();
       }
 
     
@@ -896,13 +915,13 @@ void loop()
       Serial.print(F("The time of day is: "));
       Serial.print(hour()); Serial.print(":"); Serial.print(minute());
       // Go into night (power save) mode if:
-      if ((minutesToday < sunrise - minutesBeforeSunrise)        // over an hour before sunrise
-      or  (minutesToday > sunset  + minutesAfterSunset)        // over 45 mintues after sunset
+      if ((minutesToday < sunrise - minutesBeforeSunrise)
+      or  (minutesToday > sunset  + minutesAfterSunset)
       or  ( (ina219b_volts < 12.3) ))          // battery is critically low voltage
        //and ((minute() % 20) > 2 )) )  // 00, 01, 02, 20, 21, 22, 40, 41, 42, Because it can take until the next minute before the Ubiquiti is ready.
       {
         Serial.print(F(", which is Night time. We will switch to daytime at "));
-        Serial.print((sunrise - 60) / 60); Serial.print(":"); Serial.println((sunrise - 60) % 60);
+        Serial.print((sunrise - minutesBeforeSunrise) / 60); Serial.print(":"); Serial.println((sunrise - minutesBeforeSunrise) % 60);
 #endif
         // Night time! (We're not between "an hour before sunrise" and "15 minutes after sunset", so turn stuff off.)
         // First set variables and record in eeprom that we're in power save mode.
@@ -1051,7 +1070,7 @@ void loop()
       // Don't come back to daytime unless volts are safely above 12.5 //jjj
       } else if (ina219b_volts > 12.4) {
         Serial.print(F(", which is Day time. We will switch to night at "));
-        Serial.print((sunset - 15) / 60); Serial.print(":"); Serial.println((sunset - 15) % 60);
+        Serial.print((sunset + minutesAfterSunset) / 60); Serial.print(":"); Serial.println((sunset + minutesAfterSunset) % 60);
         // Otherwise, make sure things are TURNED ON
         isDaytime = true;
         if (powerSave) {
@@ -1594,11 +1613,15 @@ String getWeatherString() {
 //    weatherString += String(charComma);
 //    weatherString += String(freeRam());
 
-  // 20: print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
+  // 20: OLD print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
+    //weatherString += String(winddirRaw);
+  // 20: print "turn on" status of Ubiquiti:U and Cameras:P=PG launch (or North), H=HG launch (or South), B=Brain Box (down). X=Bad Weather (cams don't auto-on)
   weatherString += String(charComma);
-  if (not true) {
-    weatherString += String(winddirRaw);
-  }
+  if (keepUbiquitiOn)              { weatherString += String("U"); }
+  if (EEPROM.read(eeCamHGenabled)) { weatherString += String("H"); }
+  if (EEPROM.read(eeCamPGenabled)) { weatherString += String("P"); }
+  if (EEPROM.read(eeCamBBenabled)) { weatherString += String("B"); }
+  if (camStatus.badWeather)        { weatherString += String("X"); }
 
   // 21: print weather direction string to make it easy to read which direction the wind is blowing.
   weatherString += String(charComma);

@@ -91,12 +91,14 @@ void checkEthIncomingData() {
             case 'B': // for turn Brain Box camera on
               if (EEPROM.read(eeCamBBenabled)) {
                 incomingClient.print(F("B detected, BB camera was ON, turning off BB camera..."));
-                //disableCamBB;
-                EEPROM.update(eeCamPGenabled, false);
+                //disableCamBB();
+                camStatus.bbDesireOn = false;
+                EEPROM.update(eeCamBBenabled, false);
                 digitalWrite(PIN_Cam12_CONTROL, Cam12_OFF);
               } else {
                 incomingClient.print(F("B detected, BB camera was OFF, turning on BB camera..."));
-                //enableCamBB;                
+                //enableCamBB();
+                camStatus.bbDesireOn = true;
                 EEPROM.update(eeCamBBenabled, true);
                 digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
               }
@@ -106,12 +108,14 @@ void checkEthIncomingData() {
             case 'H': // for turn Hang Gliding camera on
               if (EEPROM.read(eeCamHGenabled)) {
                 incomingClient.print(F("H detected, HG camera was ON, turning off HG camera..."));
-                //disableCamHG;
-                EEPROM.update(eeCamPGenabled, false);
+                //disableCamHG();
+                camStatus.hgDesireOn = false;
+                EEPROM.update(eeCamHGenabled, false);
                 digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
               } else {
                 incomingClient.print(F("H detected, HG camera was OFF, turning on HG camera..."));
-                //enableCamHG;                
+                //enableCamHG();
+                camStatus.hgDesireOn = true;
                 EEPROM.update(eeCamHGenabled, true);
                 digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
               }
@@ -121,32 +125,46 @@ void checkEthIncomingData() {
             case 'P': // for turn Paragliding camera on
               if (EEPROM.read(eeCamPGenabled)) {
                 incomingClient.print(F("P detected, PG camera was ON, turning off PG camera..."));
-                //disableCamPG;
+                //disableCamPG();
+                camStatus.pgDesireOn = false;
                 EEPROM.update(eeCamPGenabled, false);
                 digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
               } else {
                 incomingClient.print(F("P detected, PG camera was OFF, turning on PG camera..."));
-                //enableCamPG;                
+                //enableCamPG();
+                camStatus.pgDesireOn = true;
                 EEPROM.update(eeCamPGenabled, true);
                 digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
               }
               incomingClient.println(F(" Done!"));
               break;
+
+            case 'X': // Bad Weather forecast, don't auto-on the cameras in the morning.
+              if(camStatus.badWeather) {
+                incomingClient.print(F("X detected, Bad Weather bit is now set FALSE so cameras will auto-start tomorrow morning... "));
+                camStatus.badWeather = false;
+              } else {
+                incomingClient.print(F("X detected, Bad Weather bit is now set TRUE, so cameras will NOT auto-start tomorrow morning... "));
+                camStatus.badWeather = true;
+              }
+              EEPROM.put(eeCamStatus, camStatus);
+              incomingClient.println(F(" done!"));
+              break;
               
             case 'A': // for turn ALL cameras on
-              incomingClient.print(F("A detected, turning on all cameras... "));
-              enableCam12;
-              enableCamHG;
-              enableCamPG;
-              incomingClient.println(F(" - DONE, all cameras powered."));
+              incomingClient.print(F("A detected, (BROKEN! NOT:) turning on all cameras... "));
+              enableCam12();
+              enableCamHG();
+              enableCamPG();
+              incomingClient.println(F(" - DONE, but probably did not turn off cameras."));
               break;
 
             case 'a': // for turn ALL cameras off
-              incomingClient.print(F("a detected, turning OFF all cameras... "));
-              disableCam12;
-              disableCamHG;
-              disableCamPG;
-              incomingClient.println(F(" - DONE, all cameras shut off."));
+              incomingClient.print(F("a detected, (BROKEN! NOT:) turning OFF all cameras... "));
+              disableCam12();
+              disableCamHG();
+              disableCamPG();
+              incomingClient.println(F(" - DONE, but probably took no action."));
               break;
 
 
@@ -189,7 +207,7 @@ void checkEthIncomingData() {
               incomingClient.println(F("---===  Note!! It takes 10 minutes for system time to update after RTC fix!! ===------"));
               break;
 
-            case 'W': // for turn ALL cameras off
+            case 'W': // adjust "wake up" time 15 minutes earlier
               incomingClient.print(F("W detected, adding 15 minutes to morning wake-up time... "));
               minutesBeforeSunrise = minutesBeforeSunrise + 15;
               if (minutesBeforeSunrise > 120) { minutesBeforeSunrise = 120; }
@@ -200,7 +218,7 @@ void checkEthIncomingData() {
               incomingClient.println(F(" minutes before sunrise."));
               break;
 
-            case 'w': // for turn ALL cameras off
+            case 'w': // adjust "wake up" time 15 minutes later
               incomingClient.print(F("w detected, subtracting 15 minutes from morning wake-up time... "));
               minutesBeforeSunrise = minutesBeforeSunrise - 15;
               if (minutesBeforeSunrise < -120) { minutesBeforeSunrise = -120; }
@@ -211,7 +229,7 @@ void checkEthIncomingData() {
               incomingClient.println(F(" minutes before sunrise."));
               break;
 
-            case 'S': // for turn ALL cameras off
+            case 'S': // adjust "sleep" time 15 minutes later
               incomingClient.print(F("S detected, adding 15 minutes to night go-to-sleep time... "));
               minutesAfterSunset = minutesAfterSunset + 15;
               if (minutesAfterSunset > 120) { minutesAfterSunset = 120; }
@@ -222,7 +240,7 @@ void checkEthIncomingData() {
               incomingClient.println(F(" minutes after sunset."));
               break;
 
-            case 's': // for turn ALL cameras off
+            case 's': // adjust "sleep" time 15 minutes earlier
               incomingClient.print(F("s detected, subtracting 15 minutes from night go-to-sleep time... "));
               minutesAfterSunset = minutesAfterSunset - 15;
               if (minutesAfterSunset < -120) { minutesAfterSunset = -120; }
@@ -246,24 +264,41 @@ void checkEthIncomingData() {
               incomingClient.println(F("P: Camera viewing the PG launch."));
               incomingClient.println(F("A: Turn ON all Cameras (Brain Box, HG, PG)."));
               incomingClient.println(F("a: Turn OFF all Cameras (Brain Box, HG, PG)."));
+              incomingClient.println(F("X: Bad Weather forecast, disable AUTO TURN ON for cameras. Can still be manually turned on."));
               incomingClient.println(F("N: Force an NTP check to see if the RTC should be updated."));
               incomingClient.println(F("T: Add one hour to RTC clock, for DST end in Fall. Takes 10 minutes to take effect!!"));
               incomingClient.println(F("t: Subtract one hour from RTC clock, for DST begin in Spring. Takes 10 minutes to take effect!!"));
-              incomingClient.println(F("W: Add 15 minutes to morning wake time."));
-              incomingClient.println(F("w: Subtract 15 minutes from morning wake time."));
-              incomingClient.println(F("S: Add 15 minutes to night go-to-sleep time."));
-              incomingClient.println(F("s: Subtract 15 minutes from night go-to-sleep time."));
+              incomingClient.println(F("W: Add 15 minutes to morning wake time, wakes up earlier."));
+              incomingClient.println(F("w: Subtract 15 minutes from morning wake time, wake up later."));
+              incomingClient.println(F("S: Add 15 minutes to night go-to-sleep time, stay up later."));
+              incomingClient.println(F("s: Subtract 15 minutes from night go-to-sleep time, go to sleep earlier."));
               incomingClient.println("");
-              incomingClient.print(F("Minutes before Sunrise: ")); incomingClient.println(minutesBeforeSunrise);
-              incomingClient.print(F("Minutes after Sunset:   ")); incomingClient.println(minutesAfterSunset);
-              //incomingClient.print(F("camStatus byte value:   ")); incomingClient.println(camStatus);
-              incomingClient.print(F("camStatus EEPROM value: ")); incomingClient.println(EEPROM.read(eeCamStatus));
-              incomingClient.print(F("CamHG desired on:       ")); incomingClient.println(EEPROM.read(eeCamHGenabled));
-              incomingClient.print(F("CamPG desired on:       ")); incomingClient.println(EEPROM.read(eeCamPGenabled));
-              incomingClient.print(F("CamBB desired on:       ")); incomingClient.println(EEPROM.read(eeCamBBenabled));
-              incomingClient.print(F("Ubiquity Keep On:       ")); incomingClient.println(EEPROM.read(eeKeepUbiOn));
+              incomingClient.print(F("  Minutes before Sunrise: ")); incomingClient.println(minutesBeforeSunrise);
+              incomingClient.print(F("  Minutes after Sunset:   ")); incomingClient.println(minutesAfterSunset);
+              incomingClient.print(F("  camStatus EEPROM value: ")); incomingClient.println(EEPROM.read(eeCamStatus));
+              incomingClient.print(F("  Bad Weather bit:        ")); incomingClient.println(camStatus.badWeather);
+              incomingClient.print(F("  CamHG desired on:       ")); incomingClient.print(EEPROM.read(eeCamHGenabled)); incomingClient.print(" : "); incomingClient.println(camStatus.hgDesireOn);
+              incomingClient.print(F("  CamPG desired on:       ")); incomingClient.print(EEPROM.read(eeCamPGenabled)); incomingClient.print(" : "); incomingClient.println(camStatus.pgDesireOn);
+              incomingClient.print(F("  CamBB desired on:       ")); incomingClient.print(EEPROM.read(eeCamBBenabled)); incomingClient.print(" : "); incomingClient.println(camStatus.bbDesireOn);
+              incomingClient.print(F("  Ubiquity Keep On:       ")); incomingClient.println(EEPROM.read(eeKeepUbiOn));
+              incomingClient.print(F("  Solar   V: "));              incomingClient.print(String(ina219a_volts, 2));
+              incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219a_ma, 0));
+              incomingClient.print(F(  "Battery V: "));              incomingClient.print(String(ina219b_volts, 2));
+              incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219b_ma, 0));
+              incomingClient.print(F("  Free ram:      "));          incomingClient.println(String(freeRam()));
+              incomingClient.print(F("  Temp internal: "));          incomingClient.println(String(bme280b.readTempC()));
+              incomingClient.print(F("  Humidity int:  "));          incomingClient.println(String(bme280b.readFloatHumidity()));
+              incomingClient.print(F("  Sunrise / Set: "));
+                incomingClient.print(strMinutesToHHMM(sunrise));
+                incomingClient.print(" / ");
+                incomingClient.println(strMinutesToHHMM(sunset));
+              incomingClient.print(F("  Wake / Sleep:  "));
+                incomingClient.print(strMinutesToHHMM(sunrise - minutesBeforeSunrise));
+                incomingClient.print(" / ");
+                incomingClient.println(strMinutesToHHMM(sunset + minutesAfterSunset));
+              incomingClient.println();
               incomingClient.println(startupMessage);
-              incomingClient.println("");
+              incomingClient.println();
               break;
           }
         }
@@ -453,45 +488,57 @@ void disableWifi() {
 // Camera control helper functions
 
 void enableCam12() {
-  Serial.println(F("Enabling Cam12"));
-  digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
-  camStatus.bbDesireOn = true;
-  EEPROM.update(eeCamBBenabled, true);
-  delay(200);
+  if (camStatus.bbDesireOn == false) {
+    Serial.println(F("Enabling Cam12"));
+    digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
+    camStatus.bbDesireOn = true;
+    EEPROM.update(eeCamBBenabled, true);
+    EEPROM.put(eeCamStatus, camStatus);
+    //delay(50);
+  }
 }
 void disableCam12() {
   Serial.println(F("Disabling Cam12"));
   digitalWrite(PIN_Cam12_CONTROL, Cam12_OFF);
   camStatus.bbDesireOn = false;
   EEPROM.update(eeCamBBenabled, false);
+  EEPROM.put(eeCamStatus, camStatus);
 }
 
 void enableCamPG() {
-  Serial.println(F("Enabling CamPG"));
-  digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
-  camStatus.pgDesireOn = true;
-  EEPROM.update(eeCamPGenabled, true);
-  delay(200);
+  if (camStatus.pgDesireOn == false) {
+    Serial.println(F("Enabling CamPG"));
+    camStatus.pgDesireOn = true;
+    digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+    EEPROM.update(eeCamPGenabled, true);
+    EEPROM.put(eeCamStatus, camStatus);
+    //delay(50);
+  }
 }
 void disableCamPG() {
   Serial.println(F("Disabling CamPG"));
-  digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
   camStatus.pgDesireOn = false;
+  digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
   EEPROM.update(eeCamPGenabled, false);
+  EEPROM.put(eeCamStatus, camStatus);
 }
 
 void enableCamHG() {
-  Serial.println(F("Enabling CamHG"));
-  digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
-  camStatus.hgDesireOn = true;
-  EEPROM.update(eeCamHGenabled, true);
-  delay(200);
+  if (camStatus.hgDesireOn == false) {
+    Serial.println(F("Enabling CamHG"));
+    digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+    camStatus.hgDesireOn = true;
+    EEPROM.update(eeCamHGenabled, true);
+    EEPROM.put(eeCamStatus, camStatus);
+    //delay(50);
+  }
 }
 void disableCamHG() {
   Serial.println(F("Disabling CamHG"));
   digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
   camStatus.hgDesireOn = false;
   EEPROM.update(eeCamHGenabled, false);
+  EEPROM.put(eeCamStatus, camStatus);
 }
 
 
@@ -788,6 +835,21 @@ String getTimeWithZeros() {
 
     return S;
 
+}
+
+// Given minutes-after-midnight (like int sunset or int sunrise), turn that into military HH:MM with padded zeros
+String strMinutesToHHMM(int M) {
+
+  String S;
+
+  if (M / 60 < 10) S += "0";
+  S += String(M / 60);
+  S += ":";
+
+  if (M % 60 < 10) S += "0";
+  S += String(M % 60);
+
+  return S;
 }
 
 
