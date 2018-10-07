@@ -74,6 +74,12 @@ void checkEthIncomingData() {
               Serial.println(F("Done dumping file to Ethernet."));
 
               break; // End of 'D'ump
+
+            case 'g': // for Get Camera Snapshot (a stretch, but I'm running out of letters)
+              incomingClient.print(F("<-- g detected. Getting a camera snapshot. "));
+              requestCamSnapshot();
+
+              break; // End of 'g'et Camera Snapshot
               
             case 'U': // for Toggle Ubiquiti keep-on (vs 5 minute Save & Send all day)
               incomingClient.print(F("U detected, toggling Ubiquity to: "));
@@ -89,52 +95,34 @@ void checkEthIncomingData() {
               break; // End of 'U'biquiti toggle
               
             case 'B': // for turn Brain Box camera on
-              if (EEPROM.read(eeCamBBenabled)) {
+              if (camStatus.bbDesireOn) {
                 incomingClient.print(F("B detected, BB camera was ON, turning off BB camera..."));
-                //disableCamBB();
-                camStatus.bbDesireOn = false;
-                EEPROM.update(eeCamBBenabled, false);
-                digitalWrite(PIN_Cam12_CONTROL, Cam12_OFF);
+                disableCamBB();
               } else {
                 incomingClient.print(F("B detected, BB camera was OFF, turning on BB camera..."));
-                //enableCamBB();
-                camStatus.bbDesireOn = true;
-                EEPROM.update(eeCamBBenabled, true);
-                digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
+                enableCamBB();
               }
               incomingClient.println(F(" Done!"));
               break;
               
             case 'H': // for turn Hang Gliding camera on
-              if (EEPROM.read(eeCamHGenabled)) {
+              if (camStatus.hgDesireOn) {
                 incomingClient.print(F("H detected, HG camera was ON, turning off HG camera..."));
-                //disableCamHG();
-                camStatus.hgDesireOn = false;
-                EEPROM.update(eeCamHGenabled, false);
-                digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
+                disableCamHG();
               } else {
                 incomingClient.print(F("H detected, HG camera was OFF, turning on HG camera..."));
-                //enableCamHG();
-                camStatus.hgDesireOn = true;
-                EEPROM.update(eeCamHGenabled, true);
-                digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+                enableCamHG();
               }
               incomingClient.println(F(" Done!"));
               break;
               
             case 'P': // for turn Paragliding camera on
-              if (EEPROM.read(eeCamPGenabled)) {
+              if (camStatus.pgDesireOn) {
                 incomingClient.print(F("P detected, PG camera was ON, turning off PG camera..."));
-                //disableCamPG();
-                camStatus.pgDesireOn = false;
-                EEPROM.update(eeCamPGenabled, false);
-                digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
+                disableCamPG();
               } else {
                 incomingClient.print(F("P detected, PG camera was OFF, turning on PG camera..."));
-                //enableCamPG();
-                camStatus.pgDesireOn = true;
-                EEPROM.update(eeCamPGenabled, true);
-                digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+                enableCamPG();
               }
               incomingClient.println(F(" Done!"));
               break;
@@ -152,19 +140,19 @@ void checkEthIncomingData() {
               break;
               
             case 'A': // for turn ALL cameras on
-              incomingClient.print(F("A detected, (BROKEN! NOT:) turning on all cameras... "));
-              enableCam12();
+              incomingClient.print(F("A detected, turning on all cameras... "));
+              enableCamBB();
               enableCamHG();
               enableCamPG();
-              incomingClient.println(F(" - DONE, but probably did not turn off cameras."));
+              incomingClient.println(F(" - DONE."));
               break;
 
             case 'a': // for turn ALL cameras off
-              incomingClient.print(F("a detected, (BROKEN! NOT:) turning OFF all cameras... "));
-              disableCam12();
+              incomingClient.print(F("a detected, turning OFF all cameras... "));
+              disableCamBB();
               disableCamHG();
               disableCamPG();
-              incomingClient.println(F(" - DONE, but probably took no action."));
+              incomingClient.println(F(" - DONE."));
               break;
 
 
@@ -277,26 +265,30 @@ void checkEthIncomingData() {
               incomingClient.print(F("  Minutes after Sunset:   ")); incomingClient.println(minutesAfterSunset);
               incomingClient.print(F("  camStatus EEPROM value: ")); incomingClient.println(EEPROM.read(eeCamStatus));
               incomingClient.print(F("  Bad Weather bit:        ")); incomingClient.println(camStatus.badWeather);
-              incomingClient.print(F("  CamHG desired on:       ")); incomingClient.print(EEPROM.read(eeCamHGenabled)); incomingClient.print(" : "); incomingClient.println(camStatus.hgDesireOn);
-              incomingClient.print(F("  CamPG desired on:       ")); incomingClient.print(EEPROM.read(eeCamPGenabled)); incomingClient.print(" : "); incomingClient.println(camStatus.pgDesireOn);
-              incomingClient.print(F("  CamBB desired on:       ")); incomingClient.print(EEPROM.read(eeCamBBenabled)); incomingClient.print(" : "); incomingClient.println(camStatus.bbDesireOn);
-              incomingClient.print(F("  Ubiquity Keep On:       ")); incomingClient.println(EEPROM.read(eeKeepUbiOn));
+              incomingClient.print(F("  CamHG desired on:       ")); incomingClient.println(camStatus.hgDesireOn);
+              incomingClient.print(F("  CamPG desired on:       ")); incomingClient.println(camStatus.pgDesireOn);
+              incomingClient.print(F("  CamBB desired on:       ")); incomingClient.println(camStatus.bbDesireOn);
+              incomingClient.print(F("  Ubiquiti Keep on:       ")); incomingClient.println(EEPROM.read(eeKeepUbiOn));
               incomingClient.print(F("  Solar   V: "));              incomingClient.print(String(ina219a_volts, 2));
-              incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219a_ma, 0));
-              incomingClient.print(F(  "Battery V: "));              incomingClient.print(String(ina219b_volts, 2));
-              incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219b_ma, 0));
-              incomingClient.print(F("  Free ram:      "));          incomingClient.println(String(freeRam()));
+                incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219a_ma, 0));
+              incomingClient.print(F("  Battery V: "));              incomingClient.print(String(ina219b_volts, 2));
+                incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219b_ma, 0));
+              incomingClient.print(F("  Battery drain minutes: "));  incomingClient.print(String(battDrainMinutes));
+                incomingClient.print(F(", mAm: "));                    incomingClient.print(String(battDrainmA));
+                incomingClient.print(F(", mAh = "));                   incomingClient.println(String(battDrainmA / 60));
+              incomingClient.print(F("  ina219_MMA loops: "));       incomingClient.println(String(ina219a_MMAloops));
               incomingClient.print(F("  Temp internal: "));          incomingClient.println(String(bme280b.readTempC()));
               incomingClient.print(F("  Humidity int:  "));          incomingClient.println(String(bme280b.readFloatHumidity()));
-              incomingClient.print(F("  Sunrise / Set: "));
+              incomingClient.print(F("  Sunrise / Wake: "));
                 incomingClient.print(strMinutesToHHMM(sunrise));
-                incomingClient.print(" / ");
-                incomingClient.println(strMinutesToHHMM(sunset));
-              incomingClient.print(F("  Wake / Sleep:  "));
-                incomingClient.print(strMinutesToHHMM(sunrise - minutesBeforeSunrise));
-                incomingClient.print(" / ");
+                incomingClient.print(" - "); incomingClient.print(minutesBeforeSunrise); incomingClient.print(" minutes = ");
+                incomingClient.println(strMinutesToHHMM(sunrise - minutesBeforeSunrise));
+              incomingClient.print(F("  Sunset / Sleep: "));
+                incomingClient.print(strMinutesToHHMM(sunset));
+                incomingClient.print(" + "); incomingClient.print(minutesAfterSunset); incomingClient.print(" minutes = ");
                 incomingClient.println(strMinutesToHHMM(sunset + minutesAfterSunset));
               incomingClient.println();
+              incomingClient.print(F("  Free ram:      "));          incomingClient.println(String(freeRam()));
               incomingClient.println(startupMessage);
               incomingClient.println();
               break;
@@ -337,15 +329,16 @@ void checkEthIncomingData() {
 
 }
 
-
+void setKeepUbiquitiOn(bool v) {
+    keepUbiquitiOn = v;
+    EEPROM.update(eeKeepUbiOn, v);
+}
 
 // Turns on power for components needed for network connectivity
 void enableEthernet() {
 
   // DON'T KEEP ENABLING ONCE IT'S ALREADY ENABLED! It's wasteful. Also it makes an endless loop if the 30 seconds crosses the "second zero" boundary.
   if (ethEnabled) return;
-
-  //enableWifi();   //We do this separately now, so we can write to an SD card without turning on the wifi.
 
 //jjj20f first turn Ethernet shield on
   pinMode(PIN_ETH_CONTROL, OUTPUT);                     // prepares ETH power control pin
@@ -400,19 +393,6 @@ void enableEthernet() {
 
 }
 
-void enableWifi() {
-
-  if (wifiEnabled or wifiStartTime) return;
-  Serial.print(F("enableWifi called, wasn't already enabled. Delay seconds: ")); Serial.println(wifiStartupDelay);
-
-  pinMode(PIN_UBIQUITI_CONTROL, OUTPUT);                 // prepares Ubiquiti power control pin
-  digitalWrite(PIN_UBIQUITI_CONTROL, UBIQUITI_ON);  // turns Ubiquiti on
-  wifiStartTime = millis();
-  
-  // Rest of enabling happens in loop() where we check that it's been wifiStartupDelay seconds (currently 75, may be out of date)
-
-}
-
 // Turns off power for network components to save power
 void disableEthernet() {
   Serial.println();
@@ -433,9 +413,6 @@ void disableEthernet() {
   incomingClient.stop();
   client.stop();
 
-  // It would be okay to disable wifi any time ethernet is disabled, but for good form let's separate them out from now on.
-  //disableWifi();
-
   //print the pinmodes first
   PrintSpiPinMode();
 
@@ -443,21 +420,33 @@ void disableEthernet() {
 //             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
 //             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
 
-
-//  if (not wxOwner.equals("D")) {  // Crashes the sketch if you don't actually remove power from Ethernet Shield.
-
-// jjj turn off SPI machine 
-    SPI.end(); 
-//jjj20f turn off pins
-    pinMode(MOSI, INPUT);                    //             prevents leakage through ESD diodes
-    pinMode(MISO, INPUT);                    //             prevents leakage through ESD diodes
-    pinMode(SCK,  INPUT);                    //             prevents leakage through ESD diodes
-    pinMode(SS,   INPUT);                    //             prevents leakage through ESD diodes
-//  }
+  // turn off SPI machine 
+  SPI.end(); 
+  pinMode(MOSI, INPUT);                    //             prevents leakage through ESD diodes
+  pinMode(MISO, INPUT);                    //             prevents leakage through ESD diodes
+  pinMode(SCK,  INPUT);                    //             prevents leakage through ESD diodes
+  pinMode(SS,   INPUT);                    //             prevents leakage through ESD diodes
 
   pinMode(PIN_ETH_CONTROL, OUTPUT);                      // prepares ETH power control pin
   digitalWrite(PIN_ETH_CONTROL, ETH_DISABLED);           // turns ETH shield off
   ethEnabled = false;
+
+}
+
+void enableWifi() {
+
+  if (wifiEnabled or wifiStartTime) return;
+  Serial.print(F("enableWifi called, wasn't already enabled. Delay seconds: ")); Serial.println(wifiStartupDelay);
+
+  if (camSnapshot) {
+    
+  }
+  pinMode(PIN_UBIQUITI_CONTROL, OUTPUT);                 // prepares Ubiquiti power control pin
+  digitalWrite(PIN_UBIQUITI_CONTROL, UBIQUITI_ON);  // turns Ubiquiti on
+  wifiStartTime = millis();
+  
+  // Rest of enabling happens in loop() where we check that it's been wifiStartupDelay seconds (currently 55, may be out of date)
+
 }
 
 void disableWifi() {
@@ -468,6 +457,19 @@ void disableWifi() {
   if (keepUbiquitiOn and isDaytime) {
     // do nothing, keep it on!
     Serial.println(F(" Wifi left on due to keepUbiquitiOn flag."));
+    return;
+  }
+
+  if (wifiStartTime) {
+    // do nothing, something has requested the wifi be turned on so we'll leave it on.
+    // up to that thing to turn it off after it's done.
+    Serial.println(F(" Wifi left on due to wifiStartTime > 0, meaning something is starting up wifi."));
+    return;
+  }
+
+  if (camSnapshot) {
+    // do nothing, a camera snapshot has been requested so we leave wifi on for a bit.
+    Serial.println(F(" Wifi left on due to camera snapshot request."));
     return;
   }
 
@@ -483,62 +485,6 @@ void disableWifi() {
   wifiEnabled = false;
   wifiStartTime = 0;
 
-}
-
-// Camera control helper functions
-
-void enableCam12() {
-  if (camStatus.bbDesireOn == false) {
-    Serial.println(F("Enabling Cam12"));
-    digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
-    camStatus.bbDesireOn = true;
-    EEPROM.update(eeCamBBenabled, true);
-    EEPROM.put(eeCamStatus, camStatus);
-    //delay(50);
-  }
-}
-void disableCam12() {
-  Serial.println(F("Disabling Cam12"));
-  digitalWrite(PIN_Cam12_CONTROL, Cam12_OFF);
-  camStatus.bbDesireOn = false;
-  EEPROM.update(eeCamBBenabled, false);
-  EEPROM.put(eeCamStatus, camStatus);
-}
-
-void enableCamPG() {
-  if (camStatus.pgDesireOn == false) {
-    Serial.println(F("Enabling CamPG"));
-    camStatus.pgDesireOn = true;
-    digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
-    EEPROM.update(eeCamPGenabled, true);
-    EEPROM.put(eeCamStatus, camStatus);
-    //delay(50);
-  }
-}
-void disableCamPG() {
-  Serial.println(F("Disabling CamPG"));
-  camStatus.pgDesireOn = false;
-  digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
-  EEPROM.update(eeCamPGenabled, false);
-  EEPROM.put(eeCamStatus, camStatus);
-}
-
-void enableCamHG() {
-  if (camStatus.hgDesireOn == false) {
-    Serial.println(F("Enabling CamHG"));
-    digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
-    camStatus.hgDesireOn = true;
-    EEPROM.update(eeCamHGenabled, true);
-    EEPROM.put(eeCamStatus, camStatus);
-    //delay(50);
-  }
-}
-void disableCamHG() {
-  Serial.println(F("Disabling CamHG"));
-  digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
-  camStatus.hgDesireOn = false;
-  EEPROM.update(eeCamHGenabled, false);
-  EEPROM.put(eeCamStatus, camStatus);
 }
 
 

@@ -1,10 +1,10 @@
-const String wxVersion = "21j";
-const bool disableNTP = true;             // Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
-const bool enableEthDump2Serial = false;  //Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 21j 2018/09/13) starting at ms ";
-const byte wifiStartupDelay = 55;         // Seconds to wait for Ubiquity Wifi startup
-int minutesBeforeSunrise = 30;       // Minutes before sunrise to wake and start sending data.
-int minutesAfterSunset = 30;       // Minutes after sunset to stay awake before sleep().
+const String wxVersion = "21r";
+const bool   disableNTP = true;             // Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
+const bool   enableEthDump2Serial = false;  // Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
+const String startupMessage = "UM Weather Station (ver 21r 2018/10/07)";
+const byte   wifiStartupDelay = 55;         // Seconds to wait for Ubiquity Wifi startup
+int minutesBeforeSunrise = 30;              // Minutes before sunrise to wake and start sending data.
+int minutesAfterSunset = 30;                // Minutes after sunset to stay awake before sleep().
 //#define TENMINUTEDAY                      // Switches between night and day every 10 minutes.
 
 
@@ -34,31 +34,31 @@ int minutesAfterSunset = 30;       // Minutes after sunset to stay awake before 
 
 Adafruit_INA219_5A ina219a(ina219a_HWaddr);     // First  ina219 sensor: A == Solar Panel
 Adafruit_INA219_5A ina219b(ina219b_HWaddr);     // Second ina219 sensor: B == Battery
-BME280 bme280a;                              // First  bme280 sensor: A
-BME280 bme280b;                              // Second bme280 sensor: B
+BME280 bme280a;                                 // First  bme280 sensor: A == inside the mostly-sealed Brain Box
+BME280 bme280b;                                 // Second bme280 sensor: B == outside (someday we'll add this)
 
 
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// EEPROM cells have a write life of 100,000 writes.
+//    Once an hour, 24 hours: would last 10 years.
+//    Once every 10 minutes, 14 hours a day: 3 years.
+//    Once a minute 12 hours a day: gone in 6 months.
+//   Keep writes to less than 25 a day, for each cell.
 // EEPROM MAP of used addresses
 // 00-64 RESERVED (for Ariadne bootloader)
 //    65 PowerSave flag
 //    66 Watchdog flag
 // 67-70 Watchdog time_t
 //    71 Ubiquiti stay-on flag
+//    72 Transmit interval (not implemented)
 //
-//    80-81 uInt Boot-up counter
+//    80-81 uInt Boot-up counter (disabled after 25k, burning through it too fast)
 //    82-83 uInt watchdog counter
 //    84-85 uInt sleep counter
 //    86    Byte camera control (on/off, etc)
-//    87    CamHG desired to be on (true/false)
-//    88    CamPG desired to be on (true/false)
-//    89    CamBB desired to be on (true/false)
 //    90    Char minutes before Sunrise to wake, -120 to 120, Going negative means not to wake until after sunrise.
 //    91    Char minutes after  Sunset to sleep, -120 to 120. Going negative means go to sleep before sunset.
-//    107   CamHG desired to be on (true/false)
-//    109   CamPG desired to be on (true/false)
-//    111   CamBB desired to be on (true/false)
 //
 // RTC USED ADDRESSES:
 //   0x0B rtcWindSpeed, keep the windspeed so we can resume the MMA after a reboot
@@ -70,13 +70,10 @@ const int eeWatchdog = 66;
 const int eeWatchdogTime = 67;    // to 70 - four bytes
 const int eeKeepUbiOn = 71;
 const int eeTransmitInterval = 72;
-const int eeBootCounter = 80;     // to 81 - two bytes
+const int eeBootCounter = 80;     // to 81 - two bytes, suspended because it was writing to eeprom too often.
 const int eeWatchdogCounter = 82; // to 83 - two bytes
 const int eeSleepCounter = 84;    // to 85 - two bytes
 const int eeCamStatus = 86;
-const int eeCamHGenabled = 107;
-const int eeCamPGenabled = 109;
-const int eeCamBBenabled = 111;
 const int eeMinutesBeforeSunrise = 90; // Char, -120 to 120
 const int eeMinutesAfterSunset = 91;   // Char, -120 to 120
 
@@ -104,6 +101,8 @@ struct structCamStatus {
 };
 
 structCamStatus camStatus;
+structCamStatus camSnapshotSaveCamStatus;
+
 
 /* DS3232 Register Addresses
    RTC_SECONDS   0x00
@@ -118,8 +117,8 @@ structCamStatus camStatus;
    ALM1_HOURS    0x09
    ALM1_DAYDATE  0x0A
    ALM2_MINUTES  0x0B  //Stolen for windspeed
-   ALM2_HOURS    0x0C
-   ALM2_DAYDATE  0x0D
+   ALM2_HOURS    0x0C  //Stolen for struct RTCmem
+   ALM2_DAYDATE  0x0D  //Stolen for struct RTCmem
    RTC_CONTROL   0x0E
    RTC_STATUS    0x0F
    RTC_AGING     0x10
@@ -175,6 +174,7 @@ time_t wifiStartTime = 0;   // Ubiquiti M5 takes ~64 seconds to start, need to k
 time_t pauseSolarStartTime; //Keep track of when we paused the solar panel so we can leave it off for a set time.
 time_t resumeSolarStartTime;//Similarly, what time we resumed so we don't cut it off too fast.
 time_t uploadPending = 0;   //Set it to the time when a pending upload starts. Don't shut off wifi if one is pending. At least not for 2 or 3 minutes or something.
+time_t camSnapshot = 0;     //Used when we want to take and upload a power-efficient single picture from the cameras.
 time_t reportWatchdog = 0;  //Do we need to report a watchdog reset?
 time_t recentTime = 0;      //Set the current time periodically so we can use it in the Watchdog Interrupt
 time_t lastCrashTime = 0;
@@ -183,6 +183,7 @@ const char charComma = ',';       //Save memory with Serial.print(charComma) ins
 //const char compile_date[] = __DATE__ " " __TIME__;
 
 long lastWindCheck = 0;
+int minuteWindClicks = 0;
 volatile long lastWindIRQ = 0;
 volatile byte windClicks = 0;
 volatile byte pin18Clicks = 0;
@@ -227,17 +228,17 @@ volatile float rainHour[60];        //60 floating numbers to keep track of 60 mi
 
 //These are all the weather values that wunderground expects:
 int winddir = 0;              // [0-360 instantaneous wind direction]
-unsigned int winddirRaw = 0;   // Keep the raw ADC reading for troubleshooting
+unsigned int winddirRaw = 0;  // Keep the raw ADC reading for troubleshooting
 float windspeedmph = 0;       // [mph instantaneous wind speed]
 float windgustmph = 0;        // [mph current wind gust, using software specific time period]
-int windgustdir = 0;          // [0-360 using software specific time period]
-int winddir_avg2m = 0;        // [0-360 2 minute average wind direction]
+int   windgustdir = 0;        // [0-360 using software specific time period]
+int   winddir_avg2m = 0;      // [0-360 2 minute average wind direction]
 float windgustmph_10m = 0;    // [mph past 10 minutes wind gust mph ]
 float windgustmph_5m = 0;     // [mph past 5 minutes wind gust]
 float windmax_1m = 0;
 float windmin_1m = 0;
-int windgustdir_10m = 0;      // [0-360 past 10 minutes wind gust direction]
-int windgustdir_5m = 0;       // 0-360 past 5 minutes wind gust direction
+int   windgustdir_10m = 0;    // [0-360 past 10 minutes wind gust direction]
+int   windgustdir_5m = 0;     // 0-360 past 5 minutes wind gust direction
 String strWindDir = "ERR";    // N, NNE, NE, ENE, E, ESE, SE, SSE, S, SSW, SW, WSW, W, WNW, NW, NNW
 
 float humidity = 0; // [%]
@@ -251,6 +252,9 @@ float pres5min[5];
 
 float batt_lvl = 11.8;     // [analog value from 0 to 1023]
 float light_lvl = 455;     // [analog value from 0 to 1023]
+
+float battDrainmA = 0;      // Try to track short term battery drain, so we can shut things off in case of clouds etc.
+byte battDrainMinutes = 0;
 
 //INA 219 volt & current sensor. MMA means Modified Moving Average. PWM charging requires some smoothing.
 float ina219a_volts;
@@ -286,7 +290,7 @@ volatile unsigned long raintime, rainlast, raininterval, rain;
 //****************************
 
 // Structure to hold essential data for overnight storage or batched transmission during cloudy days.
-// 6 bytes so far, with 3 bits to spare. (may be inaccurate)
+// 7 bytes so far, with 2 bits to spare. (may be inaccurate)
 //bit cheat-sheet: 4=16, 5=32, 6=64, 7=128, 10=1024
 struct wxCache_struct {
   byte gust    : 4;    //Wind gust = gust * 2 + wind speed!!
@@ -298,7 +302,7 @@ struct wxCache_struct {
   byte ws      : 6;    //Wind speed
   byte humid2  : 5;    //Humidity inside / 3.23
   byte sent    : 1;    // Sent successfully? True / False.
-  // 4+4+8+8+8+10+6+5 = 53 = 7 bytes with 3 bits to spare. 
+  // 4+4+8+8+8+10+6+5+1 = 54 = 7 bytes with 2 bits to spare. 
 };
 
 time_t wxCache_time;
@@ -340,8 +344,6 @@ EthernetUDP Udp;
 
 // if you don't want to use DNS (and reduce your sketch size)
 // use the numeric IP instead of the name for the server:
-//IPAddress server(74,125,232,128);    // numeric IP for Google (no DNS)
-//char server[] = "www.google.com";    // name address for Google (using DNS)
 char CSSserver[] = "www.crestlinesoaring.org"; // Web server to connect to.
 // [MarshallProprietary]
 
@@ -362,7 +364,6 @@ const int NTP_PACKET_SIZE = 48;
 byte packetBuffer[ NTP_PACKET_SIZE ];
 char timeServer[] = "us.pool.ntp.org";
 // [MarshallProprietary]
-//IPAddress timeServerIP(128, 138, 141, 172);   //time.nist.gov IP at one point
 unsigned long msNTPrequest;          // miliseconds at which NTP request was made (so we can see how long it took)
 
 
@@ -430,7 +431,7 @@ void pin19IRQ()
 ISR(WDT_vect)
 {
     // Get the last crash time. If it's too recent, we won't write a new time to avoid thrashing EEPROM too frequently.
-    EEPROM.put(eeWatchdog, 1);
+    //EEPROM.put(eeWatchdog, 1);
     EEPROM.get(eeWatchdogTime, lastCrashTime);
     if (recentTime > lastCrashTime + 600) {
       EEPROM.put(eeWatchdog, 1);                // write a "1" to the first byte to indicate the data in second byte is valid and the ISR triggered properly
@@ -443,8 +444,8 @@ ISR(WDT_vect)
 
     //Enable interrupts, see if serial works. Maybe we can do more with the watchdog?
     sei();
-    Serial.print(F("recentTime is ")); Serial.print(recentTime); Serial.print(F(" lastCrashTime is ")); Serial.print(lastCrashTime); Serial.print(": "); Serial.println(recentTime - lastCrashTime);
-    Serial.println(F("---===00 Done with Watchdog ISR 00===---"));
+    //Serial.print(F("recentTime is ")); Serial.print(recentTime); Serial.print(F(" lastCrashTime is ")); Serial.print(lastCrashTime); Serial.print(": "); Serial.println(recentTime - lastCrashTime);
+    //Serial.println(F("---===00 Done with Watchdog ISR 00===---"));
 
     while(true);                  // triggers the second watchdog timeout for a reset (does this actually work?)
 }
@@ -477,120 +478,21 @@ void setup()
     Serial.println();
     Serial.println();
     Serial.print(startupMessage); // Set at the top of sketch to make it easier to find & update
+    Serial.print(" starting at ms ");
     Serial.println(millis());
 
     //Enable the WatchDog, 8 second timeout.
     //wdt_enable(WDTO_8S);
     enableWatchdog();
 
-    if (EEPROM.read(eePowerSave) == 255) {
-      Serial.println(F("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0)."));
-      EEPROM.update(eePowerSave, false);
-    }
-
-    if (EEPROM.read(eeKeepUbiOn) == 255) {
-      Serial.println(F("EEPROM eeKeepUbiOn was 255, is this a new Arduino? Setting to false (0)."));
-      EEPROM.update(eeKeepUbiOn, false);
-    }
-
-    if (EEPROM.read(eeCamStatus) == 255) {
-      Serial.println(F("EEPROM eeCamStatus was 255, is this a new Arduino? Setting to false (0)."));
-      EEPROM.update(eeCamStatus, false);
-    }
-    if (EEPROM.read(eeCamPGenabled) == 255) {
-      Serial.println(F("EEPROM eeCamPGenabled was 255, is this a new Arduino? Setting to false (0)."));
-      EEPROM.update(eeCamPGenabled, false);
-    }
-    if (EEPROM.read(eeCamHGenabled) == 255) {
-      Serial.println(F("EEPROM eeCamHGenabled was 255, is this a new Arduino? Setting to false (0)."));
-      EEPROM.update(eeCamHGenabled, false);
-    }
-    if (EEPROM.read(eeCamBBenabled) == 255) {
-      Serial.println(F("EEPROM eeCamBBenabled was 255, is this a new Arduino? Setting to false (0)."));
-      EEPROM.update(eeCamBBenabled, false);
-    }
-
-    if (EEPROM.read(eeMinutesBeforeSunrise) == 255) {
-      Serial.println(F("EEPROM eeMinutesBeforeSunrise was 255, is this a new Arduino? Setting to 30."));
-      EEPROM.put(eeMinutesBeforeSunrise, char(minutesBeforeSunrise));
-    }
-    if (EEPROM.read(eeMinutesAfterSunset) == 255) {
-      Serial.println(F("EEPROM eeMinutesAfterSunset was 255, is this a new Arduino? Setting to 30."));
-      EEPROM.put(eeMinutesAfterSunset, char(minutesAfterSunset));
-    }
-
-    //Check whether the Ubiquiti should be left on all day or cycled off and only on to upload once every 5 minutes
-    if (EEPROM.read(eeKeepUbiOn)) {
-      keepUbiquitiOn = true;
-    }
-
-    // Increment a boot counter. We'd like an idea of how often we're booting, even if we don't know when necessarily.
-    EEPROM.get(eeBootCounter, eeUIntTemp);
-    EEPROM.put(eeBootCounter, eeUIntTemp + 1);
-
-    
-    // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
-    Serial.print(F("Reading EEPROM to see power save state: "));
-    if (EEPROM.read(eePowerSave)) {
-      Serial.println(F("Power Save. Shutting off Eth and Ubiquiti... ")); //jjj ln
-      powerSave = true;
-      isDaytime = false;
-
-      disableWifi();
-      disableEthernet();
-
-    } else {
-      Serial.print(F("No power save. Turning on Eth and Ubiquiti... "));
-      powerSave = false;
-      isDaytime = true;
-
-      // Now that we send every 5 minutes, don't turn on until it's time to turn on.
-      if (keepUbiquitiOn) {
-        enableWifi();
-        enableEthernet();
-      } else {
-        disableWifi();
-        disableEthernet();
-      }
-
-    }
-    Serial.println("Done.");
-    Serial.println();
-
-    //Populate a struct with saved camera state so camera on/off (powered/unpowered) state can persist through pboots.
-    camStatus = EEPROM.get(eeCamStatus, camStatus);
-    if (EEPROM.read(eeCamPGenabled)) {
-      digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
-    } else {
-      digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
-    }
-
-    if (EEPROM.read(eeCamHGenabled)) {
-      digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
-    } else {
-      digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
-    }
-
-    if (EEPROM.read(eeCamBBenabled)) {
-      digitalWrite(PIN_Cam12_CONTROL, Cam12_ON);
-    } else {
-      digitalWrite(PIN_Cam12_CONTROL, Cam12_OFF);
-    }
-
-    //Populate the wake/sleep times
-    EEPROM.get(eeMinutesBeforeSunrise, eeCharTemp);
-    minutesBeforeSunrise = eeCharTemp;
-    EEPROM.get(eeMinutesAfterSunset, eeCharTemp);
-    minutesAfterSunset = eeCharTemp;
-    
-
-
+    // Load initial values from EEPROM, and also set sane values for eeprom on a new Arduino. EEPROM starts out all 1's (255).
+    initializeEEPROM();
 
     //Weather Station stuff
     pinMode(STAT1, OUTPUT); //Status LED Blue
 
     pinMode(WSPEED, INPUT_PULLUP); // input from wind meters windspeed sensor
-    pinMode(RAIN, INPUT_PULLUP); // input from wind meters rain gauge sensor
+    //pinMode(RAIN, INPUT_PULLUP); // input from wind meters rain gauge sensor
 
 
     //Setup INA219 voltage and current sensor(s)
@@ -633,8 +535,8 @@ void setup()
     // attach external interrupt pins to IRQ functions
     attachInterrupt(0, rainIRQ, FALLING);
     attachInterrupt(1, wspeedIRQ, FALLING);
-    attachInterrupt(digitalPinToInterrupt(18), pin18IRQ, FALLING);
-    attachInterrupt(digitalPinToInterrupt(19), pin19IRQ, FALLING);
+    //attachInterrupt(digitalPinToInterrupt(18), pin18IRQ, FALLING);
+    //attachInterrupt(digitalPinToInterrupt(19), pin19IRQ, FALLING);
 
     // turn on interrupts
     interrupts();
@@ -648,6 +550,7 @@ void setup()
     loopDelta = 0;
 
     // DEBUG: populates the array so it takes up RAM. Enough for 4 hours of data if WX_CACHE_MAX is 240.
+    /*
     Serial.print("Sizeof wxCache: "); Serial.println(sizeof(wxCache));
     for (byte i = 0; i < WX_CACHE_MAX; i++) {
       wxCache[i].ws = 0;
@@ -657,7 +560,7 @@ void setup()
       wxCache[i].temp2 = 0;
       wxCache[i].vBatt = 0;
       wxCache[i].aBatt = 0;
-    }
+    } */
 
 
     /**********************************************
@@ -866,28 +769,20 @@ void loop()
         enableEthernet();
       }
 
-      // After 4:30pm, shut off the cameras and Ubiquiti-always-on setting
-      // Considering... between 10:00am and 4:30, turn them on? Not yet. Maybe later.
-      if ( (hour() == 16)
-      and ((minute() == 28) or (minute() == 29)) ) {
-        keepUbiquitiOn = false;
-        EEPROM.update(eeKeepUbiOn, false);
-        disableCamPG();
-        disableCamHG();
-        disableCam12();
-      }
 
-      if (ina219b_ma < 100) {
-        // Keep track of minutes with battery drain; shut off cameras & full-time Ubiquiti
-      } else {
-        // reset some of the countdown timers.
-      }
+/* **************************************************
+ *  C A M E R A S    CAMERAS    C A M E R A S
+ *  C A M E R A S    CAMERAS    C A M E R A S
+ *  C A M E R A S    CAMERAS    C A M E R A S
+ * *************************************************/
 
-      // A short while after sunrise, turn the cameras on if charging conditions are good enough.
-      if (((hour() >= 9) and (hour() < 13))
-       and ((ina219a_ma > 600) and (ina219a_volts > 14))
-       or  (ina219a_volts > 16.0)
-       and not (camStatus.badWeather)) {
+      // A short while after sunrise, turn ON the cameras, if charging conditions are good enough.
+      // This if and/and/or/and thing is terrible. I should do better.
+      if (((hour() >= 8) and (hour() < 14))
+       and (((ina219a_ma > 600) and (ina219a_volts > 14))
+        or (ina219a_volts > 16.0))
+       and not (camStatus.badWeather)
+       and (battDrainmA > -500)) {
         // If it's early enough in the day, and charging voltage is high enough, enable cameras.
         if (keepUbiquitiOn == false) {
           keepUbiquitiOn = true;
@@ -895,6 +790,43 @@ void loop()
         }
         enableCamPG();
         enableCamHG();
+      }
+
+
+      // Keep track of minutes with battery drain; shut off cameras & full-time Ubiquiti if there isn't enough sun.
+      if (ina219b_ma < 0) {
+        battDrainMinutes += 1;
+        // If the battery's been draining too long (minutes) or too much (milliamp-minutes), cut the cameras.
+        if (not camSnapshot and ((battDrainMinutes >= 10) or (battDrainmA < -8000) or ((ina219b_volts < 12.5) and (battDrainMinutes > 1)) ) ) {
+          disableCamHG();
+          disableCamPG();
+          disableCamBB();
+          keepUbiquitiOn = false;
+          EEPROM.update(eeKeepUbiOn, false);
+          disableWifi();
+          disableEthernet();
+        }
+      } else {
+        // reset some of the countdown timers.
+        battDrainMinutes = 0;
+      }
+      battDrainmA       += ina219b_ma;
+
+
+
+      // After 5:30pm, shut off the cameras and Ubiquiti-always-on setting
+      if ( (hour() == 17)
+      and ((minute() == 28) or (minute() == 29)) ) {
+        keepUbiquitiOn = false;
+        EEPROM.update(eeKeepUbiOn, false);
+        disableCamPG();
+        disableCamHG();
+        disableCamBB();
+      }
+
+      // If a snapshot was requested, cam shutoff is delayed. Check back to see if it's time to shut them off yet.
+      if (camSnapshot) {
+        checkCamSnapshot();
       }
 
     
@@ -933,8 +865,13 @@ void loop()
 
         // Don't pull the plug if we're waiting for wifi to come up so we can send out a batch.
         if (not uploadPending) {
+          keepUbiquitiOn = false;
+          EEPROM.update(eeKeepUbiOn, false);
           disableWifi();
           disableEthernet();
+          disableCamBB();
+          disableCamPG();
+          disableCamHG();
 
 
           //jjjsleep 
@@ -952,11 +889,6 @@ void loop()
             // Increment a sleep counter so we have an idea of how often we go to sleep.
             EEPROM.get(eeSleepCounter, eeUIntTemp);
             EEPROM.put(eeSleepCounter, eeUIntTemp + 1);
-
-            // Turn off the cameras at night. This might change but for now we want to make sure they sleep when the Arduino does.
-            disableCam12();
-            disableCamPG();
-            disableCamHG();
 
             ina219a.enterPowerSave();       //jjj powering down two INAs saves 2mA
             ina219b.enterPowerSave();
@@ -1617,11 +1549,11 @@ String getWeatherString() {
     //weatherString += String(winddirRaw);
   // 20: print "turn on" status of Ubiquiti:U and Cameras:P=PG launch (or North), H=HG launch (or South), B=Brain Box (down). X=Bad Weather (cams don't auto-on)
   weatherString += String(charComma);
-  if (keepUbiquitiOn)              { weatherString += String("U"); }
-  if (EEPROM.read(eeCamHGenabled)) { weatherString += String("H"); }
-  if (EEPROM.read(eeCamPGenabled)) { weatherString += String("P"); }
-  if (EEPROM.read(eeCamBBenabled)) { weatherString += String("B"); }
-  if (camStatus.badWeather)        { weatherString += String("X"); }
+  if (keepUbiquitiOn)        { weatherString += String("U"); }
+  if (camStatus.hgDesireOn)  { weatherString += String("H"); }
+  if (camStatus.pgDesireOn)  { weatherString += String("P"); }
+  if (camStatus.bbDesireOn)  { weatherString += String("B"); }
+  if (camStatus.badWeather)  { weatherString += String("X"); }
 
   // 21: print weather direction string to make it easy to read which direction the wind is blowing.
   weatherString += String(charComma);
@@ -1629,13 +1561,20 @@ String getWeatherString() {
     if (strWindDir.length() < 3) weatherString += String("_");
     if (strWindDir.length() < 2) weatherString += String("_");
     weatherString += strWindDir;
+  } else if (battDrainMinutes) {
+    weatherString += String(battDrainMinutes);
   }
+
+  // 22:
+  weatherString += String(charComma);
+  weatherString += String(battDrainmA, 0);
 
   // 22-24: Boot, Sleep, and Watchdog counters
   if (justRestarted) {
-    weatherString += String(charComma);
-    EEPROM.get(eeBootCounter, eeUIntTemp);
-    weatherString += String(eeUIntTemp);
+    //weatherString += String(charComma);  //<-- moved this up a few lines to the battDrainmA print
+    // Boot counter suspended because it was writing to EEPROM too often.
+    //EEPROM.get(eeBootCounter, eeUIntTemp);
+    //weatherString += String(eeUIntTemp);
   
     weatherString += String(charComma);
     EEPROM.get(eeSleepCounter, eeUIntTemp);

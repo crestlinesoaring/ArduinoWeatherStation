@@ -105,6 +105,10 @@ void put_humid2(byte m, float h) {
   h = h / 3.23;
   wxCache[m].humid2 = round(h);
 }
+float get_humid2(byte m) {
+  m = m % 60;
+  return (wxCache[m].humid2 * 3.23);
+}
 
 //vBatt is the voltage on the battery. Can save between 10.0 and 15.0 volts in 2/100ths 
 // subtract 10 and multiply by 50

@@ -5,8 +5,6 @@
  * 
  */
 
-
-
  
 //Returns the instataneous wind speed
 float get_wind_speed()
@@ -15,6 +13,7 @@ float get_wind_speed()
     deltaTime /= 1000.0; //Covert to seconds
     float windSpeed = (float)windClicks / deltaTime; // (ex, 3 clicks / 0.750s = 4 clicks per second)
 
+    minuteWindClicks += windClicks;
     windClicks = 0; //Reset and start watching for new wind
     lastWindCheck = millis();
     windSpeed *= 1.492; //4 * 1.492 = 5.968MPH
@@ -51,8 +50,8 @@ int get_wind_direction()
     else if (adc <  957 )  { strWindDir = "WNW"; return (293); }   // WNW
     else if (adc <  982 )  { strWindDir = "NW";  return (315); }   // NW
     else if (adc <  1008)  { strWindDir = "W";   return (270); }   // W
-    else                   { strWindDir = "ERH"; return (-10); }
-    return (-10); // Never get here
+    else                   { strWindDir = "ERH"; return (-20); }
+    return (-30); // Never get here
 }
 
 
@@ -130,6 +129,152 @@ void disableSolar() {
 }
 
 
+// Camera control helper functions
+void enableCamBB() {
+  if (camStatus.bbDesireOn == false) {
+    Serial.println(F("Enabling CamBB"));
+    digitalWrite(PIN_CamBB_CONTROL, CamBB_ON);
+    camStatus.bbDesireOn = true;
+    EEPROM.put(eeCamStatus, camStatus);
+  }
+}
+void disableCamBB() {
+  Serial.println(F("Disabling CamBB"));
+  digitalWrite(PIN_CamBB_CONTROL, CamBB_OFF);
+  camStatus.bbDesireOn = false;
+  EEPROM.put(eeCamStatus, camStatus);
+}
+
+void enableCamPG() {
+  if (camStatus.pgDesireOn == false) {
+    Serial.println(F("Enabling CamPG"));
+    camStatus.pgDesireOn = true;
+    digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+    EEPROM.put(eeCamStatus, camStatus);
+  }
+}
+void disableCamPG() {
+  Serial.println(F("Disabling CamPG"));
+  camStatus.pgDesireOn = false;
+  digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
+  EEPROM.put(eeCamStatus, camStatus);
+}
+
+void enableCamHG() {
+  if (camStatus.hgDesireOn == false) {
+    Serial.println(F("Enabling CamHG"));
+    digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
+    camStatus.hgDesireOn = true;
+    EEPROM.put(eeCamStatus, camStatus);
+  }
+}
+void disableCamHG() {
+  Serial.println(F("Disabling CamHG"));
+  digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
+  camStatus.hgDesireOn = false;
+  EEPROM.put(eeCamStatus, camStatus);
+}
+
+// Called to request that a cameras "snapshot" be taken. This process will change, but initially it means
+// to turn on the cameras next time the ubiquiti turns on, and leave the ubiquiti on for at least 2 minutes.
+// Then turn it all back off again using finishCamSnapshot() below.
+void requestCamSnapshot() {
+  camSnapshot = now();
+  camSnapshotSaveCamStatus = camStatus;
+  if (not camSnapshotSaveCamStatus.pgDesireOn) { enableCamPG(); }
+  if (not camSnapshotSaveCamStatus.hgDesireOn) { enableCamHG(); }
+}
+void checkCamSnapshot() {
+  //Check that it's been 2 minutes since snapshot was requested
+  if (camSnapshot and (now() > camSnapshot + 120)) {
+    camSnapshot = 0;
+    if (not camSnapshotSaveCamStatus.pgDesireOn) { disableCamPG(); }
+    if (not camSnapshotSaveCamStatus.hgDesireOn) { disableCamHG(); }
+    disableWifi();
+  }
+}
+
+// Called from Setup() to load memory values from EEPROM.
+// Also looks for 255 values, which suggest a new Arduino or a newly added EEPROM variable that needs initialization
+void initializeEEPROM() {
+
+  if (EEPROM.read(eePowerSave) == 255) {
+    Serial.println(F("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0)."));
+    EEPROM.update(eePowerSave, false);
+  }
+
+  if (EEPROM.read(eeKeepUbiOn) == 255) {
+    Serial.println(F("EEPROM eeKeepUbiOn was 255, is this a new Arduino? Setting to false (0)."));
+    EEPROM.update(eeKeepUbiOn, false);
+  }
+
+  if (EEPROM.read(eeCamStatus) == 255) {
+    Serial.println(F("EEPROM eeCamStatus was 255, is this a new Arduino? Setting to false (0)."));
+    EEPROM.update(eeCamStatus, false);
+  }
+
+  if (EEPROM.read(eeMinutesBeforeSunrise) == 255) {
+    Serial.println(F("EEPROM eeMinutesBeforeSunrise was 255, is this a new Arduino? Setting to 30."));
+    EEPROM.put(eeMinutesBeforeSunrise, char(minutesBeforeSunrise));
+  }
+  if (EEPROM.read(eeMinutesAfterSunset) == 255) {
+    Serial.println(F("EEPROM eeMinutesAfterSunset was 255, is this a new Arduino? Setting to 30."));
+    EEPROM.put(eeMinutesAfterSunset, char(minutesAfterSunset));
+  }
+
+  //Check whether the Ubiquiti should be left on all day or cycled off and only on to upload once every 5 minutes
+  if (EEPROM.read(eeKeepUbiOn)) {
+    keepUbiquitiOn = true;
+  }
+
+  // Increment a boot counter. We'd like an idea of how often we're booting, even if we don't know when necessarily.
+  //Disabled because it's wearing out this EEPROM cell a little fast.
+//  EEPROM.get(eeBootCounter, eeUIntTemp);
+//  EEPROM.put(eeBootCounter, eeUIntTemp + 1);
+
+  
+  // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
+  Serial.print(F("Reading EEPROM to see power save state: "));
+  if (EEPROM.read(eePowerSave)) {
+    Serial.println(F("Power Save. Shutting off Eth and Ubiquiti... ")); //jjj ln
+    powerSave = true;
+    isDaytime = false;
+
+    disableWifi();
+    disableEthernet();
+
+  } else {
+    Serial.print(F("No power save. Turning on Eth and Ubiquiti... "));
+    powerSave = false;
+    isDaytime = true;
+
+    // Now that we send every 5 minutes, don't turn on until it's time to turn on.
+    if (keepUbiquitiOn) {
+      enableWifi();
+      enableEthernet();
+    } else {
+      disableWifi();
+      disableEthernet();
+    }
+
+  }
+  Serial.println("Done.");
+  Serial.println();
+
+  //Populate a struct with saved camera state so camera on/off (powered/unpowered) state can persist through pboots.
+  EEPROM.get(eeCamStatus, camStatus);
+  if (camStatus.pgDesireOn) { camStatus.pgDesireOn = false; enableCamPG(); }
+  if (camStatus.hgDesireOn) { camStatus.hgDesireOn = false; enableCamHG(); }
+  if (camStatus.bbDesireOn) { camStatus.bbDesireOn = false; enableCamBB(); }
+  
+
+  //Populate the wake/sleep times
+  EEPROM.get(eeMinutesBeforeSunrise, eeCharTemp);
+  minutesBeforeSunrise = eeCharTemp;
+  EEPROM.get(eeMinutesAfterSunset, eeCharTemp);
+  minutesAfterSunset = eeCharTemp;
+
+}
 
 void goToSleep(){
   //jjjsleep 
@@ -141,7 +286,7 @@ void goToSleep(){
   // shut down or power down external peripherals
   // should be done at some point by (de-)powering with Mega's pins
 
-  // Morning: don't go back to sleep if it's within an hour of Wake time, because we only wake once an hour.
+  // Morning: don't go back to sleep if it's within 40 minutes of Wake time, because we only wake once an hour.
   if ((minutesToday < sunrise - minutesBeforeSunrise - 40) or (minutesToday > sunset)) {
 
     // Increment a sleep counter so we have an idea of how often we go to sleep.
@@ -149,8 +294,9 @@ void goToSleep(){
     EEPROM.put(eeSleepCounter, eeUIntTemp + 1);
 
     // Turn off the cameras at night. This might change but for now we want to make sure they sleep when the Arduino does.
-    // This turns them off in a way where they won't turn back on in the morning! They must be manually turned back on each day, for now.
-    disableCam12();
+    keepUbiquitiOn = false;
+    EEPROM.update(eeKeepUbiOn, false);
+    disableCamBB();
     disableCamPG();
     disableCamHG();
 
@@ -342,33 +488,11 @@ void calcWeather()
         }
     }
 
-    //Calc humidity
-    //humidity = myHumidity.readHumidity();
-
-    //Calc tempf from pressure sensor
-    //tempf = myPressure.readTempF();
-
     //Total rainfall for the day is calculated within the interrupt
     //Calculate amount of rainfall for the last 60 minutes
     rainin = 0;
     for(int i = 0 ; i < 60 ; i++)
         rainin += rainHour[i];
-
-    //Calc pressure but ONLY ONCE A MINUTE, so deltas are meaningful.
-    /*
-    if (seconds == 59) {
-      oldPressure = pressure;
-      pressure = myPressure.readPressure();
-      if (oldPressure == 0) oldPressure = pressure; //First time, let's not have a "delta" of the current pressure.
-    } */
-
-    //Calc dewptf
-
-    //Calc light level
-//jjjm       light_lvl = get_light_level();
-
-    //Calc battery level
-//jjjm       batt_lvl = get_battery_level();
     
 }
 
