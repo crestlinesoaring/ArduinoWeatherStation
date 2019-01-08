@@ -19,3 +19,6 @@
 [submodule "libraries/SparkFun_MPL3115A2"]
 	path = libraries/SparkFun_MPL3115A2
 	url = https://github.com/sparkfun/SparkFun_MPL3115A2_Breakout_Arduino_Library
+[submodule "libraries/SdFat"]
+	path = libraries/SdFat
+	url = https://github.com/greiman/SdFat
