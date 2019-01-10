@@ -1,11 +1,11 @@
-const String wxVersion = "21r";
+const String wxVersion = "21t";
 const bool   disableNTP = true;             // Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool   enableEthDump2Serial = false;  // Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 21r 2018/10/07)";
+const String startupMessage = "UM Weather Station (ver 21s 2018/10/17)";
 const byte   wifiStartupDelay = 55;         // Seconds to wait for Ubiquity Wifi startup
 int minutesBeforeSunrise = 30;              // Minutes before sunrise to wake and start sending data.
 int minutesAfterSunset = 30;                // Minutes after sunset to stay awake before sleep().
-//#define TENMINUTEDAY                      // Switches between night and day every 10 minutes.
+//#define TENMINUTEDAY                      // DEBUG: Either switches between night and day every 10 minutes, or doesn't go to night mode.
 
 
 #include <avr/wdt.h>   // WatchDog Timer. If I hit an endless loop, reset.
@@ -93,9 +93,9 @@ struct eeFlags {
 };
 
 struct structCamStatus {
-  bool hgDesireOn : 1;
-  bool pgDesireOn : 1;
-  bool bbDesireOn : 1;
+  bool SouthDesireOn : 1;
+  bool NorthDesireOn : 1;
+  bool BrainDesireOn : 1;
   bool badWeather : 1;
   byte padding    : 4;
 };
@@ -157,6 +157,7 @@ int days;                   //Yes I'm optimistic
 int sunrise;                //Minutes after midnight for sunrise
 int sunset;                 //Minutes after midnight for sunset
 int minutesToday;           //Updated each minute to current time. In minutes.
+byte telnetSeconds = 0;     //Seconds spent in a telnet session.
 byte sunriseDay = 0;        //Day we last calculated sunrise/sunset for. If it's not today, calc again.
 byte lastRealMinute;        //Keep track of when it's a new minute() (Real time, not runtime). Used to check for second() == 0, but that's not reliable.
 bool justBooted = true;     //Some stuff settles after the first minute, so let's keep track of that.
@@ -777,9 +778,8 @@ void loop()
  * *************************************************/
 
       // A short while after sunrise, turn ON the cameras, if charging conditions are good enough.
-      // This if and/and/or/and thing is terrible. I should do better.
-      if (((hour() >= 8) and (hour() < 14))
-       and (((ina219a_ma > 600) and (ina219a_volts > 14))
+      if (((hour() >= 6) and (hour() < 16))
+       and (((ina219a_ma > 500) and (ina219a_volts > 14))
         or (ina219a_volts > 16.0))
        and not (camStatus.badWeather)
        and (battDrainmA > -500)) {
@@ -787,9 +787,10 @@ void loop()
         if (keepUbiquitiOn == false) {
           keepUbiquitiOn = true;
           EEPROM.update(eeKeepUbiOn, true);
+          enableWifi();
         }
-        enableCamPG();
-        enableCamHG();
+        enableCamNorth();
+        enableCamSouth();
       }
 
 
@@ -798,9 +799,9 @@ void loop()
         battDrainMinutes += 1;
         // If the battery's been draining too long (minutes) or too much (milliamp-minutes), cut the cameras.
         if (not camSnapshot and ((battDrainMinutes >= 10) or (battDrainmA < -8000) or ((ina219b_volts < 12.5) and (battDrainMinutes > 1)) ) ) {
-          disableCamHG();
-          disableCamPG();
-          disableCamBB();
+          disableCamSouth();
+          disableCamNorth();
+          disableCamBrain();
           keepUbiquitiOn = false;
           EEPROM.update(eeKeepUbiOn, false);
           disableWifi();
@@ -810,18 +811,18 @@ void loop()
         // reset some of the countdown timers.
         battDrainMinutes = 0;
       }
-      battDrainmA       += ina219b_ma;
+      battDrainmA += ina219b_ma;
 
 
 
-      // After 5:30pm, shut off the cameras and Ubiquiti-always-on setting
-      if ( (hour() == 17)
+      // After 6:30pm, shut off the cameras and Ubiquiti-always-on setting. Once an hour in case we want to manually turn on.
+      if ( (hour() >= 18)
       and ((minute() == 28) or (minute() == 29)) ) {
         keepUbiquitiOn = false;
         EEPROM.update(eeKeepUbiOn, false);
-        disableCamPG();
-        disableCamHG();
-        disableCamBB();
+        disableCamNorth();
+        disableCamSouth();
+        disableCamBrain();
       }
 
       // If a snapshot was requested, cam shutoff is delayed. Check back to see if it's time to shut them off yet.
@@ -869,9 +870,9 @@ void loop()
           EEPROM.update(eeKeepUbiOn, false);
           disableWifi();
           disableEthernet();
-          disableCamBB();
-          disableCamPG();
-          disableCamHG();
+          disableCamBrain();
+          disableCamNorth();
+          disableCamSouth();
 
 
           //jjjsleep 
@@ -1415,34 +1416,16 @@ String getWeatherString() {
   // 6: temperature, F, outside, instant
   weatherString += String(charComma);
   //weatherString += String(bme280a.readTempF(), 2);
-// All this was before the BME280
-//    if (tempf < -1000) {
-//      weatherString += String((tempc * 0.45) + 32, 1);
-//    } else {
-//      weatherString += String(tempf, 0);
-//    }
 
   // 7: humidity, %, outside, instant from bme280a
   weatherString += String(charComma);
   //weatherString += String(bme280a.readFloatHumidity(), 0);
-// All this was before the BME280
-//    if (humidity < 200) {
-//      //weatherString += String(humidity, 1);
-//    } else {
-//      weatherString += "0";
-//    }
 
 
   // 8: Barometric pressure, hPa, outside, instant from bme280a (280b for now, since 280a doesn't exist yet)
   weatherString += String(charComma);
   //weatherString += String(pres1temp, 2);
   put_pres1(wxMinute, pres1temp);
-// All this wasbefore the BME280
-//    if (pressure > 0) {
-//      weatherString += String(pressure / 100.0, 1);
-//    } else {
-//      weatherString += "0";
-//    }
 
   // 9: Barometric pressure delta from previous reading
   weatherString += String(charComma);
@@ -1541,19 +1524,20 @@ String getWeatherString() {
   if (seconds < 10) weatherString += String('0');
   weatherString += String(seconds);
 
-  // 18: print free memory? Interesting...
-//    weatherString += String(charComma);
-//    weatherString += String(freeRam());
-
   // 20: OLD print raw wind direction ADC reading, to see why 270 degree sometimes comes back as "invalid"
     //weatherString += String(winddirRaw);
   // 20: print "turn on" status of Ubiquiti:U and Cameras:P=PG launch (or North), H=HG launch (or South), B=Brain Box (down). X=Bad Weather (cams don't auto-on)
   weatherString += String(charComma);
   if (keepUbiquitiOn)        { weatherString += String("U"); }
-  if (camStatus.hgDesireOn)  { weatherString += String("H"); }
-  if (camStatus.pgDesireOn)  { weatherString += String("P"); }
-  if (camStatus.bbDesireOn)  { weatherString += String("B"); }
+  if (camStatus.SouthDesireOn)  { weatherString += String("S"); }
+  if (camStatus.NorthDesireOn)  { weatherString += String("N"); }
+  if (camStatus.BrainDesireOn)  { weatherString += String("B"); }
   if (camStatus.badWeather)  { weatherString += String("X"); }
+  if (telnetSeconds) {
+    weatherString += String("T=");
+    weatherString += String(telnetSeconds);
+    telnetSeconds = 0;
+  }
 
   // 21: print weather direction string to make it easy to read which direction the wind is blowing.
   weatherString += String(charComma);
@@ -1567,7 +1551,7 @@ String getWeatherString() {
 
   // 22:
   weatherString += String(charComma);
-  weatherString += String(battDrainmA, 0);
+  weatherString += String(battDrainmA / 60.0, 0);
 
   // 22-24: Boot, Sleep, and Watchdog counters
   if (justRestarted) {

@@ -41,22 +41,27 @@ const byte EEPROM_HWaddr1 = 0x55;  // 2Mbit EEPROM on RTC board, 2/4 sector
 const byte EEPROM_HWaddr2 = 0x56;  // 2Mbit EEPROM on RTC board, 3/4 sector
 const byte EEPROM_HWaddr3 = 0x57;  // 2Mbit EEPROM on RTC board, 4/4 sector
 
+struct isCamEnabled {
+  bool CamNorth : 1;
+  bool CamSouth : 1;
+  bool CamBrain : 1;
+};
 
 const byte PIN_ETH_CONTROL = 8;        // Ethernet power control; on=LOW, off=HIGH
 const byte ETH_DISABLED = HIGH;
 const byte ETH_ENABLED = LOW;
 
-const byte PIN_CamPG_CONTROL = 9;      // FETQ3, 12V power to Camera4 (PG launch), Disabled(default)=LOW=Camera4 stays off; Enabled=HIGH=Camera4 turns on
-const byte CamPG_ON = HIGH;            // turn Camera4 on
-const byte CamPG_OFF = LOW;            // (default)=turn off Camera4
+const byte PIN_CamNorth_CONTROL = 9;      // FETQ3, 12V power to Camera4 (PG launch), Disabled(default)=LOW=Camera4 stays off; Enabled=HIGH=Camera4 turns on
+const byte CamNorth_ON = HIGH;            // turn Camera4 on
+const byte CamNorth_OFF = LOW;            // (default)=turn off Camera4
 
-const byte PIN_CamHG_CONTROL = 11;      // FETQ2, 12V power to Camera3 (HG launch), Disabled(default)=LOW=Camera3 stays off; Enabled=HIGH=Camera3 turns on
-const byte CamHG_ON = HIGH;             // turn Camera3 on
-const byte CamHG_OFF = LOW;             // (default)=turn off Camera3
+const byte PIN_CamSouth_CONTROL = 11;      // FETQ2, 12V power to Camera3 (HG launch), Disabled(default)=LOW=Camera3 stays off; Enabled=HIGH=Camera3 turns on
+const byte CamSouth_ON = HIGH;             // turn Camera3 on
+const byte CamSouth_OFF = LOW;             // (default)=turn off Camera3
 
-const byte PIN_Cam12_CONTROL = 12;      // FETQ1, 12V power to Camera1&2 (BB), Disabled(default)=LOW=Camera1&2 stay off; Enabled=HIGH=Camera1&2 turn on
-const byte Cam12_ON = HIGH;             // turn Camera1&2 on
-const byte Cam12_OFF = LOW;             // (default)=turn off Camera1&2
+const byte PIN_CamBrain_CONTROL = 12;      // FETQ1, 12V power to Camera1&2 (BB), Disabled(default)=LOW=Camera1&2 stay off; Enabled=HIGH=Camera1&2 turn on
+const byte CamBrain_ON = HIGH;             // turn Camera1&2 on
+const byte CamBrain_OFF = LOW;             // (default)=turn off Camera1&2
 
 const byte PIN_UBIQUITI_CONTROL = 14;   // FETQ4, 12V power to Ubiquiti AP; Enabled(default)=LOW=Ubiquiti AP stays on, Disabled=HIGH=Ubiquiti AP is off 
 const byte UBIQUITI_ON = LOW;           // (default)=turn on Ubiquiti AP

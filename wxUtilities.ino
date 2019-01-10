@@ -130,48 +130,48 @@ void disableSolar() {
 
 
 // Camera control helper functions
-void enableCamBB() {
-  if (camStatus.bbDesireOn == false) {
-    Serial.println(F("Enabling CamBB"));
-    digitalWrite(PIN_CamBB_CONTROL, CamBB_ON);
-    camStatus.bbDesireOn = true;
+void enableCamBrain() {
+  if (camStatus.BrainDesireOn == false) {
+    Serial.println(F("Enabling CamBrain"));
+    digitalWrite(PIN_CamBrain_CONTROL, CamBrain_ON);
+    camStatus.BrainDesireOn = true;
     EEPROM.put(eeCamStatus, camStatus);
   }
 }
-void disableCamBB() {
-  Serial.println(F("Disabling CamBB"));
-  digitalWrite(PIN_CamBB_CONTROL, CamBB_OFF);
-  camStatus.bbDesireOn = false;
+void disableCamBrain() {
+  Serial.println(F("Disabling CamBrain"));
+  digitalWrite(PIN_CamBrain_CONTROL, CamBrain_OFF);
+  camStatus.BrainDesireOn = false;
   EEPROM.put(eeCamStatus, camStatus);
 }
 
-void enableCamPG() {
-  if (camStatus.pgDesireOn == false) {
-    Serial.println(F("Enabling CamPG"));
-    camStatus.pgDesireOn = true;
-    digitalWrite(PIN_CamPG_CONTROL, CamPG_ON);
+void enableCamNorth() {
+  if (camStatus.NorthDesireOn == false) {
+    Serial.println(F("Enabling CamNorth"));
+    camStatus.NorthDesireOn = true;
+    digitalWrite(PIN_CamNorth_CONTROL, CamNorth_ON);
     EEPROM.put(eeCamStatus, camStatus);
   }
 }
-void disableCamPG() {
-  Serial.println(F("Disabling CamPG"));
-  camStatus.pgDesireOn = false;
-  digitalWrite(PIN_CamPG_CONTROL, CamPG_OFF);
+void disableCamNorth() {
+  Serial.println(F("Disabling CamNorth"));
+  camStatus.NorthDesireOn = false;
+  digitalWrite(PIN_CamNorth_CONTROL, CamNorth_OFF);
   EEPROM.put(eeCamStatus, camStatus);
 }
 
-void enableCamHG() {
-  if (camStatus.hgDesireOn == false) {
-    Serial.println(F("Enabling CamHG"));
-    digitalWrite(PIN_CamHG_CONTROL, CamHG_ON);
-    camStatus.hgDesireOn = true;
+void enableCamSouth() {
+  if (camStatus.SouthDesireOn == false) {
+    Serial.println(F("Enabling CamSouth"));
+    digitalWrite(PIN_CamSouth_CONTROL, CamSouth_ON);
+    camStatus.SouthDesireOn = true;
     EEPROM.put(eeCamStatus, camStatus);
   }
 }
-void disableCamHG() {
-  Serial.println(F("Disabling CamHG"));
-  digitalWrite(PIN_CamHG_CONTROL, CamHG_OFF);
-  camStatus.hgDesireOn = false;
+void disableCamSouth() {
+  Serial.println(F("Disabling CamSouth"));
+  digitalWrite(PIN_CamSouth_CONTROL, CamSouth_OFF);
+  camStatus.SouthDesireOn = false;
   EEPROM.put(eeCamStatus, camStatus);
 }
 
@@ -180,16 +180,23 @@ void disableCamHG() {
 // Then turn it all back off again using finishCamSnapshot() below.
 void requestCamSnapshot() {
   camSnapshot = now();
-  camSnapshotSaveCamStatus = camStatus;
-  if (not camSnapshotSaveCamStatus.pgDesireOn) { enableCamPG(); }
-  if (not camSnapshotSaveCamStatus.hgDesireOn) { enableCamHG(); }
+  camSnapshotSaveCamStatus.NorthDesireOn = camStatus.NorthDesireOn;
+  camSnapshotSaveCamStatus.SouthDesireOn = camStatus.SouthDesireOn;
+  if (not camSnapshotSaveCamStatus.NorthDesireOn) { 
+    digitalWrite(PIN_CamNorth_CONTROL, CamNorth_ON);
+    camStatus.NorthDesireOn = true;
+  }
+  if (not camSnapshotSaveCamStatus.SouthDesireOn) { 
+    digitalWrite(PIN_CamSouth_CONTROL, CamSouth_ON);
+    camStatus.SouthDesireOn = true;
+  }
 }
 void checkCamSnapshot() {
-  //Check that it's been 2 minutes since snapshot was requested
-  if (camSnapshot and (now() > camSnapshot + 120)) {
+  //Check that it's been ~120 seconds since snapshot was requested
+  if (camSnapshot and (now() >= camSnapshot + 115)) {
     camSnapshot = 0;
-    if (not camSnapshotSaveCamStatus.pgDesireOn) { disableCamPG(); }
-    if (not camSnapshotSaveCamStatus.hgDesireOn) { disableCamHG(); }
+    if (not camSnapshotSaveCamStatus.NorthDesireOn) { disableCamNorth(); }
+    if (not camSnapshotSaveCamStatus.SouthDesireOn) { disableCamSouth(); }
     disableWifi();
   }
 }
@@ -263,9 +270,9 @@ void initializeEEPROM() {
 
   //Populate a struct with saved camera state so camera on/off (powered/unpowered) state can persist through pboots.
   EEPROM.get(eeCamStatus, camStatus);
-  if (camStatus.pgDesireOn) { camStatus.pgDesireOn = false; enableCamPG(); }
-  if (camStatus.hgDesireOn) { camStatus.hgDesireOn = false; enableCamHG(); }
-  if (camStatus.bbDesireOn) { camStatus.bbDesireOn = false; enableCamBB(); }
+  if (camStatus.NorthDesireOn) { camStatus.NorthDesireOn = false; enableCamNorth(); }
+  if (camStatus.SouthDesireOn) { camStatus.SouthDesireOn = false; enableCamSouth(); }
+  if (camStatus.BrainDesireOn) { camStatus.BrainDesireOn = false; enableCamBrain(); }
   
 
   //Populate the wake/sleep times
@@ -296,9 +303,9 @@ void goToSleep(){
     // Turn off the cameras at night. This might change but for now we want to make sure they sleep when the Arduino does.
     keepUbiquitiOn = false;
     EEPROM.update(eeKeepUbiOn, false);
-    disableCamBB();
-    disableCamPG();
-    disableCamHG();
+    disableCamBrain();
+    disableCamNorth();
+    disableCamSouth();
 
     ina219a.enterPowerSave();       //jjj powering down two INAs saves 2mA
     ina219b.enterPowerSave();

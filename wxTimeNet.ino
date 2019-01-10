@@ -9,7 +9,7 @@
  */
 void checkEthIncomingData() {
   if (wifiEnabled) {
-    msTemp = millis();
+    usTemp = millis();  // using usTemp so we can use msTemp as a timeout timer below.
     bool timeoutWarningGiven = false;
     bool boolQuitSession = false;
     wdt_reset();
@@ -75,6 +75,7 @@ void checkEthIncomingData() {
 
               break; // End of 'D'ump
 
+            case 'G':
             case 'g': // for Get Camera Snapshot (a stretch, but I'm running out of letters)
               incomingClient.print(F("<-- g detected. Getting a camera snapshot. "));
               requestCamSnapshot();
@@ -95,34 +96,36 @@ void checkEthIncomingData() {
               break; // End of 'U'biquiti toggle
               
             case 'B': // for turn Brain Box camera on
-              if (camStatus.bbDesireOn) {
-                incomingClient.print(F("B detected, BB camera was ON, turning off BB camera..."));
-                disableCamBB();
+              if (camStatus.BrainDesireOn) {
+                incomingClient.print(F("B detected, BrainBox camera was ON, turning off BrainBox camera..."));
+                disableCamBrain();
               } else {
-                incomingClient.print(F("B detected, BB camera was OFF, turning on BB camera..."));
-                enableCamBB();
+                incomingClient.print(F("B detected, BrainBox camera was OFF, turning on BrainBox camera..."));
+                enableCamBrain();
               }
               incomingClient.println(F(" Done!"));
               break;
               
-            case 'H': // for turn Hang Gliding camera on
-              if (camStatus.hgDesireOn) {
-                incomingClient.print(F("H detected, HG camera was ON, turning off HG camera..."));
-                disableCamHG();
+            case 'H':
+            case 'S': // for turn South camera on (formerly called Hang Glider launch camera)
+              if (camStatus.SouthDesireOn) {
+                incomingClient.print(F("S detected, South camera was ON, turning off South camera..."));
+                disableCamSouth();
               } else {
-                incomingClient.print(F("H detected, HG camera was OFF, turning on HG camera..."));
-                enableCamHG();
+                incomingClient.print(F("S detected, South camera was OFF, turning on South camera..."));
+                enableCamSouth();
               }
               incomingClient.println(F(" Done!"));
               break;
-              
-            case 'P': // for turn Paragliding camera on
-              if (camStatus.pgDesireOn) {
-                incomingClient.print(F("P detected, PG camera was ON, turning off PG camera..."));
-                disableCamPG();
+
+            case 'P':
+            case 'N': // for turn North camera on (formerly called Paraglider Launch camera)
+              if (camStatus.NorthDesireOn) {
+                incomingClient.print(F("N detected, North camera was ON, turning off North camera..."));
+                disableCamNorth();
               } else {
-                incomingClient.print(F("P detected, PG camera was OFF, turning on PG camera..."));
-                enableCamPG();
+                incomingClient.print(F("N detected, North camera was OFF, turning on North camera..."));
+                enableCamNorth();
               }
               incomingClient.println(F(" Done!"));
               break;
@@ -141,23 +144,23 @@ void checkEthIncomingData() {
               
             case 'A': // for turn ALL cameras on
               incomingClient.print(F("A detected, turning on all cameras... "));
-              enableCamBB();
-              enableCamHG();
-              enableCamPG();
+              enableCamBrain();
+              enableCamSouth();
+              enableCamNorth();
               incomingClient.println(F(" - DONE."));
               break;
 
             case 'a': // for turn ALL cameras off
               incomingClient.print(F("a detected, turning OFF all cameras... "));
-              disableCamBB();
-              disableCamHG();
-              disableCamPG();
+              disableCamBrain();
+              disableCamSouth();
+              disableCamNorth();
               incomingClient.println(F(" - DONE."));
               break;
 
 
-            case 'N': // Force an NTP check to update the RTC
-              incomingClient.print(F("N detected, forcing an NTP check, time is: "));
+            case 'J': // Force an NTP check to update the RTC
+              incomingClient.print(F("J detected, forcing an NTP check, time is: "));
               incomingClient.println(getTimeWithZeros());
               returnStatus = "";
               compareRTCwithNTP();
@@ -217,7 +220,7 @@ void checkEthIncomingData() {
               incomingClient.println(F(" minutes before sunrise."));
               break;
 
-            case 'S': // adjust "sleep" time 15 minutes later
+            case 'Z': // adjust sleep (ZZZzzz) time 15 minutes later
               incomingClient.print(F("S detected, adding 15 minutes to night go-to-sleep time... "));
               minutesAfterSunset = minutesAfterSunset + 15;
               if (minutesAfterSunset > 120) { minutesAfterSunset = 120; }
@@ -228,7 +231,7 @@ void checkEthIncomingData() {
               incomingClient.println(F(" minutes after sunset."));
               break;
 
-            case 's': // adjust "sleep" time 15 minutes earlier
+            case 'z': // adjust sleep (ZZZzzz) time 15 minutes earlier
               incomingClient.print(F("s detected, subtracting 15 minutes from night go-to-sleep time... "));
               minutesAfterSunset = minutesAfterSunset - 15;
               if (minutesAfterSunset < -120) { minutesAfterSunset = -120; }
@@ -247,27 +250,28 @@ void checkEthIncomingData() {
               incomingClient.println(F("C: Cache, print cached weather lines."));
               incomingClient.println(F("D: Dump SD file for today (only valid if SD card exists)."));
               incomingClient.println(F("U: Toggle ubiquiti between Always On and Off except for send every 5 minutes. Always off at night regardless."));
-              incomingClient.println(F("B: Camera in the Brain Box."));
-              incomingClient.println(F("H: Camera viewing the HG launch."));
-              incomingClient.println(F("P: Camera viewing the PG launch."));
-              incomingClient.println(F("A: Turn ON all Cameras (Brain Box, HG, PG)."));
-              incomingClient.println(F("a: Turn OFF all Cameras (Brain Box, HG, PG)."));
+              incomingClient.println(F("B: Camera viewing Brain."));
+              incomingClient.println(F("S: Camera viewing South."));
+              incomingClient.println(F("N: Camera viewing North."));
+              incomingClient.println(F("A: Turn ON all Cameras (Brain Box, South, North)."));
+              incomingClient.println(F("a: Turn OFF all Cameras (Brain Box, South, North)."));
               incomingClient.println(F("X: Bad Weather forecast, disable AUTO TURN ON for cameras. Can still be manually turned on."));
-              incomingClient.println(F("N: Force an NTP check to see if the RTC should be updated."));
+              incomingClient.println(F("J: Force an NTP check to see if the RTC should be updated."));
               incomingClient.println(F("T: Add one hour to RTC clock, for DST end in Fall. Takes 10 minutes to take effect!!"));
               incomingClient.println(F("t: Subtract one hour from RTC clock, for DST begin in Spring. Takes 10 minutes to take effect!!"));
               incomingClient.println(F("W: Add 15 minutes to morning wake time, wakes up earlier."));
               incomingClient.println(F("w: Subtract 15 minutes from morning wake time, wake up later."));
-              incomingClient.println(F("S: Add 15 minutes to night go-to-sleep time, stay up later."));
-              incomingClient.println(F("s: Subtract 15 minutes from night go-to-sleep time, go to sleep earlier."));
+              incomingClient.println(F("Z: Add 15 minutes to night go-to-sleep (Zzzz) time, stay up later."));
+              incomingClient.println(F("z: Subtract 15 minutes from night go-to-sleep (Zzzz) time, go to sleep earlier."));
               incomingClient.println("");
               incomingClient.print(F("  Minutes before Sunrise: ")); incomingClient.println(minutesBeforeSunrise);
               incomingClient.print(F("  Minutes after Sunset:   ")); incomingClient.println(minutesAfterSunset);
               incomingClient.print(F("  camStatus EEPROM value: ")); incomingClient.println(EEPROM.read(eeCamStatus));
               incomingClient.print(F("  Bad Weather bit:        ")); incomingClient.println(camStatus.badWeather);
-              incomingClient.print(F("  CamHG desired on:       ")); incomingClient.println(camStatus.hgDesireOn);
-              incomingClient.print(F("  CamPG desired on:       ")); incomingClient.println(camStatus.pgDesireOn);
-              incomingClient.print(F("  CamBB desired on:       ")); incomingClient.println(camStatus.bbDesireOn);
+              incomingClient.print(F("  CamSouth desired on:    ")); incomingClient.println(camStatus.SouthDesireOn);
+              incomingClient.print(F("  CamNorth desired on:    ")); incomingClient.println(camStatus.NorthDesireOn);
+              incomingClient.print(F("  CamBrain desired on:    ")); incomingClient.println(camStatus.BrainDesireOn);
+              incomingClient.print(F("  CamSnapshot value:      ")); incomingClient.println(camSnapshot);
               incomingClient.print(F("  Ubiquiti Keep on:       ")); incomingClient.println(EEPROM.read(eeKeepUbiOn));
               incomingClient.print(F("  Solar   V: "));              incomingClient.print(String(ina219a_volts, 2));
                 incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219a_ma, 0));
@@ -322,8 +326,9 @@ void checkEthIncomingData() {
       incomingClient.stop();
       Serial.println();
       Serial.print(F("Incoming client disconnected after "));
-      Serial.print(millis() - msTemp);
+      Serial.print(millis() - usTemp);
       Serial.println("ms.");
+      telnetSeconds = (millis() - usTemp) / 1000;
     }
   } // End of incoming Ethernet connection handling
 
@@ -409,6 +414,12 @@ void disableEthernet() {
     Serial.println(F("Leaving Ethernet on from 11:50 to noon"));
     return;
   }
+
+#ifdef TENMINUTEDAY
+  // For debugging lets leave the ethernet on
+  Serial.println(F("Leaving Ethernet on for #TENMINUTEDAY"));
+  return;
+#endif
   
   incomingClient.stop();
   client.stop();
@@ -438,9 +449,6 @@ void enableWifi() {
   if (wifiEnabled or wifiStartTime) return;
   Serial.print(F("enableWifi called, wasn't already enabled. Delay seconds: ")); Serial.println(wifiStartupDelay);
 
-  if (camSnapshot) {
-    
-  }
   pinMode(PIN_UBIQUITI_CONTROL, OUTPUT);                 // prepares Ubiquiti power control pin
   digitalWrite(PIN_UBIQUITI_CONTROL, UBIQUITI_ON);  // turns Ubiquiti on
   wifiStartTime = millis();
@@ -478,6 +486,12 @@ void disableWifi() {
     Serial.println(F("Leaving Ubiquiti on from 11:50 to noon"));
     return;
   }
+
+#ifdef TENMINUTEDAY
+  // For debugging lets leave the "ubiquiti" on
+  Serial.println(F("Leaving Ubiquiti on for #TENMINUTEDAY"));
+  return;
+#endif
 
 
   pinMode(PIN_UBIQUITI_CONTROL, OUTPUT);                  // prepares Ubiquiti power control pin
@@ -586,7 +600,7 @@ time_t getNtpTime()
 {
   // We don't want to send anything during power save times, for now.
   if (!wifiEnabled) {
-    Serial.println("   NTP requested, but NO PACKET SENT due to Power Save mode.");
+    Serial.println("   NTP requested, but NO PACKET SENT due to Wifi not enabled or ready.");
     return 0;
   }
   if (disableNTP) {
