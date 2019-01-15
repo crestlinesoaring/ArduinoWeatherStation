@@ -9,7 +9,7 @@
 	url = https://github.com/JChristensen/DS3232RTC
 [submodule "libraries/Adafruit_INA219"]
 	path = libraries/Adafruit_INA219
-	url = https://github.com/adafruit/Adafruit_INA219
+	url = https://github.com/crestlinesoaring/Adafruit_INA219
 [submodule "libraries/SparkFun_BME280"]
 	path = libraries/SparkFun_BME280
 	url = https://github.com/sparkfun/SparkFun_BME280_Arduino_Library
