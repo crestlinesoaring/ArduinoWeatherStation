@@ -18,7 +18,7 @@ int minutesAfterSunset = 30;                // Minutes after sunset to stay awak
 #include <TimeLib.h>   // https://github.com/PaulStoffregen/Time
 #include <DS3232RTC.h> // https://github.com/JChristensen/DS3232RTC, using a DS3231, but it's still supported.
 #include "SdFat.h"     // https://github.com/greiman/SdFat, Read & write SD card for data logging.
-#include "Adafruit_INA219_5A.h"  // Voltage/Current sensor. https://github.com/adafruit/Adafruit_INA219 !! modified to read 5 amps, must get custom version (_5A) from us.
+#include "Adafruit_INA219_5A.h"  // https://github.com/crestlinesoaring/Adafruit_INA219, Voltage/Current sensor. Modified to read 5 amps - lives in forked repo owned by CrestlineSoaring.
 #include "SparkFunBME280.h"      // High precision Temp & Humidity sensor. https://github.com/sparkfun/SparkFun_BME280_Arduino_Library
 
 #include "Marshall.h"  // Site-specific parameters that cannot currently be published

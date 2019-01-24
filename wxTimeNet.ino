@@ -528,7 +528,7 @@ uint8_t getPinMode(uint8_t pin)
   if (0 == bit) return UNKNOWN_PIN;
 
   // Is there only a single bit set?
-  if (bit & bit - 1) return UNKNOWN_PIN;
+  if (bit & (bit - 1)) return UNKNOWN_PIN;
 
   volatile uint8_t *reg, *out;
   reg = portModeRegister(port);
@@ -641,7 +641,7 @@ time_t getNtpTime()
 }
 
 // send an NTP request to the time server at the given address (DNS lookup version, see IPAddress() version below)
-unsigned long sendNTPpacket(char* address)
+void sendNTPpacket(char* address)
 {
   // set all bytes in the buffer to 0
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
@@ -669,7 +669,7 @@ unsigned long sendNTPpacket(char* address)
 }
 
 // send an NTP request to the time server at the given address (IP, no-dns version)
-unsigned long sendNTPpacket(IPAddress address)
+void sendNTPpacket(IPAddress address)
 {
   // set all bytes in the buffer to 0
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
