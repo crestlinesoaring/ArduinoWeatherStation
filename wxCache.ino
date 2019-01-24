@@ -4,7 +4,7 @@
 void put_windspeed(byte m, byte windSpeed) {
   m = m % 60;
   if (windSpeed > 63) windSpeed = 63;
-  if (windSpeed < 0)  windSpeed = 0;
+  if (windSpeed <= 0)  windSpeed = 0;
   wxCache[m].ws = windSpeed;
 }
 
