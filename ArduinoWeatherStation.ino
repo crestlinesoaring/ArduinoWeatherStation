@@ -1,7 +1,7 @@
-const String wxVersion = "21t";
+const String wxVersion = "21v";
 const bool   disableNTP = true;             // Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool   enableEthDump2Serial = false;  // Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 21s 2018/10/17)";
+const String startupMessage = "UM Weather Station (ver 21v 2019/04/08)";
 const byte   wifiStartupDelay = 55;         // Seconds to wait for Ubiquity Wifi startup
 int minutesBeforeSunrise = 30;              // Minutes before sunrise to wake and start sending data.
 int minutesAfterSunset = 30;                // Minutes after sunset to stay awake before sleep().
@@ -18,7 +18,7 @@ int minutesAfterSunset = 30;                // Minutes after sunset to stay awak
 #include <TimeLib.h>   // https://github.com/PaulStoffregen/Time
 #include <DS3232RTC.h> // https://github.com/JChristensen/DS3232RTC, using a DS3231, but it's still supported.
 #include "SdFat.h"     // https://github.com/greiman/SdFat, Read & write SD card for data logging.
-#include "Adafruit_INA219_5A.h"  // https://github.com/crestlinesoaring/Adafruit_INA219, Voltage/Current sensor. Modified to read 5 amps - lives in forked repo owned by CrestlineSoaring.
+#include "Adafruit_INA219_5A.h"  // Voltage/Current sensor. https://github.com/adafruit/Adafruit_INA219 !! modified to read 5 amps, must get custom version (_5A) from us.
 #include "SparkFunBME280.h"      // High precision Temp & Humidity sensor. https://github.com/sparkfun/SparkFun_BME280_Arduino_Library
 
 #include "Marshall.h"  // Site-specific parameters that cannot currently be published
@@ -76,6 +76,8 @@ const int eeSleepCounter = 84;    // to 85 - two bytes
 const int eeCamStatus = 86;
 const int eeMinutesBeforeSunrise = 90; // Char, -120 to 120
 const int eeMinutesAfterSunset = 91;   // Char, -120 to 120
+const int eeVoltsLowestSeen = 92;          // Byte, 0 to 254
+const int eeVoltsLowestDay = 93;           // Byte, day of month
 
 unsigned int eeUIntTemp = 0;      // Not a memory location, just an int so we can easily write  ints to eeprom.
 byte eeByteTemp = 0;              // Not a memory location, just a byte so we can easily write bytes to eeprom.
@@ -242,7 +244,8 @@ int   windgustdir_10m = 0;    // [0-360 past 10 minutes wind gust direction]
 int   windgustdir_5m = 0;     // 0-360 past 5 minutes wind gust direction
 String strWindDir = "ERR";    // N, NNE, NE, ENE, E, ESE, SE, SSE, S, SSW, SW, WSW, W, WNW, NW, NNW
 
-float humidity = 0; // [%]
+float humidityOutside = 0.0; // [%]
+float humidityInside = 0.0;
 float tempf = 0; // [temperature F]
 float rainin = 0; // [rain inches over the past hour)] -- the accumulated rainfall in the past 60 min
 volatile float dailyrainin = 0; // [rain inches so far today in local time]
@@ -255,7 +258,7 @@ float batt_lvl = 11.8;     // [analog value from 0 to 1023]
 float light_lvl = 455;     // [analog value from 0 to 1023]
 
 float battDrainmA = 0;      // Try to track short term battery drain, so we can shut things off in case of clouds etc.
-byte battDrainMinutes = 0;
+int   battDrainMinutes = 0;
 
 //INA 219 volt & current sensor. MMA means Modified Moving Average. PWM charging requires some smoothing.
 float ina219a_volts;
@@ -279,6 +282,7 @@ float busvoltage = 0;
 float current_mA = 0;
 float loadvoltage = 0;
 float ina219_MMAtemp;
+float voltsLowestSeen = 20.0;
 unsigned int ina219a_MMAmillis = 0;
 unsigned int ina219a_MMAloops = 0;
 
@@ -301,7 +305,7 @@ struct wxCache_struct {
   byte vBatt   : 8;    //Voltage * 10 for battery
   unsigned int aBatt : 10;    //Milliamps for battery, / 4 (-500 to 3500ma)
   byte ws      : 6;    //Wind speed
-  byte humid2  : 5;    //Humidity inside / 3.23
+  byte humidIn  : 5;    //Humidity inside / 3.23
   byte sent    : 1;    // Sent successfully? True / False.
   // 4+4+8+8+8+10+6+5+1 = 54 = 7 bytes with 2 bits to spare. 
 };
@@ -778,9 +782,9 @@ void loop()
  * *************************************************/
 
       // A short while after sunrise, turn ON the cameras, if charging conditions are good enough.
-      if (((hour() >= 6) and (hour() < 16))
+      if ( (minutesToday > sunrise) and (minutesToday < sunset - 120)
        and (((ina219a_ma > 500) and (ina219a_volts > 14))
-        or (ina219a_volts > 16.0))
+        or (ina219a_volts > 17.5))
        and not (camStatus.badWeather)
        and (battDrainmA > -500)) {
         // If it's early enough in the day, and charging voltage is high enough, enable cameras.
@@ -789,16 +793,20 @@ void loop()
           EEPROM.update(eeKeepUbiOn, true);
           enableWifi();
         }
-        enableCamNorth();
+        if (humidityInside < 80) {
+          // Cam North is a little wonky, crashes in high humidity. *shrug*. (April 2019)
+          enableCamNorth();
+        }
         enableCamSouth();
       }
 
 
       // Keep track of minutes with battery drain; shut off cameras & full-time Ubiquiti if there isn't enough sun.
       if (ina219b_ma < 0) {
+        if (battDrainMinutes < 0) { battDrainMinutes = 0; }
         battDrainMinutes += 1;
         // If the battery's been draining too long (minutes) or too much (milliamp-minutes), cut the cameras.
-        if (not camSnapshot and ((battDrainMinutes >= 10) or (battDrainmA < -8000) or ((ina219b_volts < 12.5) and (battDrainMinutes > 1)) ) ) {
+        if (not camSnapshot and ((battDrainMinutes >= 5) or (battDrainmA < -8000) or ((ina219b_volts < 12.5) and (battDrainMinutes > 1)) ) ) {
           disableCamSouth();
           disableCamNorth();
           disableCamBrain();
@@ -807,6 +815,10 @@ void loop()
           disableWifi();
           disableEthernet();
         }
+      } else if ((ina219b_ma > 50) or (ina219a_volts > 16)) {
+        // track positive charging moments
+        if (battDrainMinutes > 0) { battDrainMinutes = 0; }
+        battDrainMinutes -= 1;
       } else {
         // reset some of the countdown timers.
         battDrainMinutes = 0;
@@ -890,7 +902,18 @@ void loop()
             // Increment a sleep counter so we have an idea of how often we go to sleep.
             EEPROM.get(eeSleepCounter, eeUIntTemp);
             EEPROM.put(eeSleepCounter, eeUIntTemp + 1);
-
+            
+            // Write the lowest voltage seen all day. Starts fresh each new day.
+            EEPROM.get(eeVoltsLowestDay, eeByteTemp);
+            if (day() == eeByteTemp) {
+              EEPROM.get(eeVoltsLowestSeen, eeByteTemp);
+              if ((byte)voltsLowestSeen < eeByteTemp) {
+                EEPROM.put(eeVoltsLowestSeen, voltsLowestSeen);
+              }
+            } else {
+              EEPROM.put(eeVoltsLowestSeen, voltsLowestSeen);
+              EEPROM.put(eeVoltsLowestDay, (byte)day());
+            }
             ina219a.enterPowerSave();       //jjj powering down two INAs saves 2mA
             ina219b.enterPowerSave();
     
@@ -1240,6 +1263,10 @@ void loop()
     ina219b_MMAvoltSum += ina219_MMAtemp;
     ina219b_MMAvoltAvg  = ina219b_MMAvoltSum / ina219b_MMAcount;
     ina219b_volts = ina219b_MMAvoltAvg;
+    if ( ((hours * 60) + minutes > 1) and (ina219b_volts < voltsLowestSeen)) {
+      voltsLowestSeen = (byte)(ina219b_volts * 10);
+    }
+    
 
     ina219_MMAtemp = ina219b.getCurrent_mA();  
     ina219b_MMAcurrentSum -= ina219b_MMAcurrentAvg;
@@ -1373,7 +1400,7 @@ String getWeatherString() {
 
   //Must read temperature first to get calibration for humidity and pressure.
   float temperature2temp = bme280b.readTempC();
-  float humidity2temp = bme280b.readFloatHumidity();
+  humidityInside = bme280b.readFloatHumidity();
   float pres1temp = bme280b.readFloatPressure() / 100.0;
 
 
@@ -1459,8 +1486,8 @@ String getWeatherString() {
 
   // 14 (was 12c): humidity, %, inside BB bme280b, instant (for checking dewpoint eventually)
   weatherString += String(charComma);
-  weatherString += String(humidity2temp, 0);
-  put_humid2(wxMinute, humidity2temp);
+  weatherString += String(humidityInside, 0);
+  put_humidIn(wxMinute, humidityInside);
 
   // 15: Current on ina219 sensor A (Solar Panel)
   weatherString += String(charComma);
@@ -1545,13 +1572,13 @@ String getWeatherString() {
     if (strWindDir.length() < 3) weatherString += String("_");
     if (strWindDir.length() < 2) weatherString += String("_");
     weatherString += strWindDir;
-  } else if (battDrainMinutes) {
+  } else if (battDrainMinutes > 0) {
     weatherString += String(battDrainMinutes);
   }
 
   // 22:
   weatherString += String(charComma);
-  weatherString += String(battDrainmA / 60.0, 0);
+  weatherString += String(battDrainmA / 60.0, 1);
 
   // 22-24: Boot, Sleep, and Watchdog counters
   if (justRestarted) {
@@ -1560,9 +1587,13 @@ String getWeatherString() {
     //EEPROM.get(eeBootCounter, eeUIntTemp);
     //weatherString += String(eeUIntTemp);
   
+    //weatherString += String(charComma);
+    //EEPROM.get(eeSleepCounter, eeUIntTemp);
+    //weatherString += String(eeUIntTemp);
+
     weatherString += String(charComma);
-    EEPROM.get(eeSleepCounter, eeUIntTemp);
-    weatherString += String(eeUIntTemp);
+    EEPROM.get(eeVoltsLowestSeen, eeByteTemp);
+    weatherString += String((float)eeByteTemp / 10.0);
   
     weatherString += String(charComma);
     EEPROM.get(eeWatchdogCounter, eeUIntTemp);

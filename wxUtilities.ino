@@ -552,7 +552,7 @@ void printWeather()
 
   // 7: humidity, %, outside, instant
   Serial.print(charComma);
-  Serial.print(humidity, 1);
+  Serial.print(humidityOutside, 1);
 
   // 8: Barometric pressure, hPa, outside, instant
   Serial.print(charComma);

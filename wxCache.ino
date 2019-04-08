@@ -4,7 +4,7 @@
 void put_windspeed(byte m, byte windSpeed) {
   m = m % 60;
   if (windSpeed > 63) windSpeed = 63;
-  if (windSpeed <= 0)  windSpeed = 0;
+  if (windSpeed < 0)  windSpeed = 0;
   wxCache[m].ws = windSpeed;
 }
 
@@ -97,17 +97,17 @@ float get_temp2c(byte m) {
 }
 
 
-//Humid2 is the humidity inside the brain box, not atmospheric!
-void put_humid2(byte m, float h) {
+//HumidIn is the humidity inside the brain box, not atmospheric!
+void put_humidIn(byte m, float h) {
   m = m % 60;
   if (h > 100) h = 100;
   if (h <   0) h =   0;
   h = h / 3.23;
-  wxCache[m].humid2 = round(h);
+  wxCache[m].humidIn = round(h);
 }
-float get_humid2(byte m) {
+float get_humidIn(byte m) {
   m = m % 60;
-  return (wxCache[m].humid2 * 3.23);
+  return (wxCache[m].humidIn * 3.23);
 }
 
 //vBatt is the voltage on the battery. Can save between 10.0 and 15.0 volts in 2/100ths 

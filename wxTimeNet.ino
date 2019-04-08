@@ -277,6 +277,8 @@ void checkEthIncomingData() {
                 incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219a_ma, 0));
               incomingClient.print(F("  Battery V: "));              incomingClient.print(String(ina219b_volts, 2));
                 incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219b_ma, 0));
+              incomingClient.print(F("  Lowest batt voltage since boot:  "));  incomingClient.println(String(voltsLowestSeen / 10.0, 2));
+              incomingClient.print(F("  Lowest batt voltage last sleep:  "));  incomingClient.println(String(EEPROM.read(eeVoltsLowestSeen) / 10.0, 1));
               incomingClient.print(F("  Battery drain minutes: "));  incomingClient.print(String(battDrainMinutes));
                 incomingClient.print(F(", mAm: "));                    incomingClient.print(String(battDrainmA));
                 incomingClient.print(F(", mAh = "));                   incomingClient.println(String(battDrainmA / 60));
@@ -291,6 +293,8 @@ void checkEthIncomingData() {
                 incomingClient.print(strMinutesToHHMM(sunset));
                 incomingClient.print(" + "); incomingClient.print(minutesAfterSunset); incomingClient.print(" minutes = ");
                 incomingClient.println(strMinutesToHHMM(sunset + minutesAfterSunset));
+              incomingClient.println();
+              incomingClient.print(F("  Current time: "));           incomingClient.println(getTimeWithZeros());
               incomingClient.println();
               incomingClient.print(F("  Free ram:      "));          incomingClient.println(String(freeRam()));
               incomingClient.println(startupMessage);
@@ -528,7 +532,7 @@ uint8_t getPinMode(uint8_t pin)
   if (0 == bit) return UNKNOWN_PIN;
 
   // Is there only a single bit set?
-  if (bit & (bit - 1)) return UNKNOWN_PIN;
+  if (bit & bit - 1) return UNKNOWN_PIN;
 
   volatile uint8_t *reg, *out;
   reg = portModeRegister(port);
@@ -641,7 +645,7 @@ time_t getNtpTime()
 }
 
 // send an NTP request to the time server at the given address (DNS lookup version, see IPAddress() version below)
-void sendNTPpacket(char* address)
+unsigned long sendNTPpacket(char* address)
 {
   // set all bytes in the buffer to 0
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
@@ -669,7 +673,7 @@ void sendNTPpacket(char* address)
 }
 
 // send an NTP request to the time server at the given address (IP, no-dns version)
-void sendNTPpacket(IPAddress address)
+unsigned long sendNTPpacket(IPAddress address)
 {
   // set all bytes in the buffer to 0
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
