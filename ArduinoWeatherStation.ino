@@ -1,7 +1,7 @@
-const String wxVersion = "21v";
+const String wxVersion = "21w";
 const bool   disableNTP = true;             // Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool   enableEthDump2Serial = false;  // Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver 21v 2019/04/08)";
+const String startupMessage = "UM Weather Station (ver 21w 2019/04/10)";
 const byte   wifiStartupDelay = 55;         // Seconds to wait for Ubiquity Wifi startup
 int minutesBeforeSunrise = 30;              // Minutes before sunrise to wake and start sending data.
 int minutesAfterSunset = 30;                // Minutes after sunset to stay awake before sleep().
@@ -908,10 +908,10 @@ void loop()
             if (day() == eeByteTemp) {
               EEPROM.get(eeVoltsLowestSeen, eeByteTemp);
               if ((byte)voltsLowestSeen < eeByteTemp) {
-                EEPROM.put(eeVoltsLowestSeen, voltsLowestSeen);
+                EEPROM.put(eeVoltsLowestSeen, (byte)(voltsLowestSeen * 10.0));
               }
             } else {
-              EEPROM.put(eeVoltsLowestSeen, voltsLowestSeen);
+              EEPROM.put(eeVoltsLowestSeen, (byte)(voltsLowestSeen * 10.0));
               EEPROM.put(eeVoltsLowestDay, (byte)day());
             }
             ina219a.enterPowerSave();       //jjj powering down two INAs saves 2mA
@@ -1263,8 +1263,9 @@ void loop()
     ina219b_MMAvoltSum += ina219_MMAtemp;
     ina219b_MMAvoltAvg  = ina219b_MMAvoltSum / ina219b_MMAcount;
     ina219b_volts = ina219b_MMAvoltAvg;
-    if ( ((hours * 60) + minutes > 1) and (ina219b_volts < voltsLowestSeen)) {
-      voltsLowestSeen = (byte)(ina219b_volts * 10);
+    if ( (ina219b_volts < voltsLowestSeen)
+     and (ina219b_volts > 2.0) ) {
+      voltsLowestSeen = ina219b_volts;
     }
     
 
