@@ -613,7 +613,7 @@ void printWeather()
   Serial.print(":");
   printDigits(seconds);
 
-  // 18: Print the RTC date & time. For debugging.
+  // 18: Print the  date & time. For debugging.
   time_t rtcTime = RTC.get();
   Serial.print(charComma);
   Serial.print("rtc:");
@@ -670,4 +670,3 @@ void printWeather()
   Serial.println();
 
 }
-

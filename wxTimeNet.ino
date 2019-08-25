@@ -3,7 +3,10 @@
  * Functions for handling time and some network related duties. Like NTP.
  * 
  */
-
+/*
+ * TODO: \
+ *  - Add local latitude as a parameter to permit re-use in other locales
+ */
 /* Check for incoming data on the Ethernet server.
  *  Typically stuff like reset requests, maybe update EEPROM values, print current data cache, etc...
  */
@@ -549,7 +552,6 @@ uint8_t getPinMode(uint8_t pin)
 
 
 
-
 void getRiseSet()
 {
   // Calculate sunrise and sunset, based on Los Angeles. Close enough.
@@ -816,5 +818,3 @@ String strMinutesToHHMM(int M) {
 
   return S;
 }
-
-

@@ -1,3 +1,11 @@
+
+/**********************************************************************************
+ * 
+ * ArduinoWeatherStation.ino
+ * 
+ * An open source weather station collection applicaiton to be run on an Arduino Mega 
+ * 
+ */
 const String wxVersion = "21w";
 const bool   disableNTP = true;             // Set to false to allow NTP, but it can cause crashes if it doesn't get a response.
 const bool   enableEthDump2Serial = false;  // Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
@@ -13,16 +21,23 @@ int minutesAfterSunset = 30;                // Minutes after sunset to stay awak
 #include <avr/power.h> // to put ADC etc to sleep
 #include <EEPROM.h>    // write to built-in Arduino EEPROM
 #include <Wire.h>      // I2C library
-#include <Math.h>      // Need cos() for calculating sunrise & sunset
+#include <math.h>      // Need cos() for calculating sunrise & sunset
 #include <Time.h>      // https://github.com/PaulStoffregen/Time  but this header doesn't seem to be needed?
 #include <TimeLib.h>   // https://github.com/PaulStoffregen/Time
 #include <DS3232RTC.h> // https://github.com/JChristensen/DS3232RTC, using a DS3231, but it's still supported.
 #include "SdFat.h"     // https://github.com/greiman/SdFat, Read & write SD card for data logging.
 #include "Adafruit_INA219_5A.h"  // Voltage/Current sensor. https://github.com/adafruit/Adafruit_INA219 !! modified to read 5 amps, must get custom version (_5A) from us.
 #include "SparkFunBME280.h"      // High precision Temp & Humidity sensor. https://github.com/sparkfun/SparkFun_BME280_Arduino_Library
+// TODO: change to site.h and include a sample site.h file
 
-#include "Marshall.h"  // Site-specific parameters that cannot currently be published
+#include "site.h"  // Site-specific parameters - configure for your site
 #include "pins.h"      // Header file for hardware dependent variables. Some hardware versions have different devices on different pins.
+
+
+#include <SPI.h>
+#include <Ethernet.h>
+#include <EthernetUdp.h>
+#include <utility/w5100.h>
 
 //#define logOneLine( line) logFile.println(line); Serial.println(line);
 //#define logOneLine2( line, base) logFile.println(line, base); Serial.println(line,base);
@@ -326,14 +341,10 @@ String tempWeatherString;     // Once a minute we will compile a "WeatherString"
 String returnStatus;          // A global string to use for updating return statuses. This is poor form, but easier than learning pointers.
 
 
+
 //**************************
 //***  Ethernet & NTP  *****
 //**************************
-#include <SPI.h>
-#include <Ethernet.h>
-#include <EthernetUdp.h>
-#include <utility/W5100.h>
-
 // Enter a MAC address for your controller below.
 // Newer Ethernet shields have a MAC address printed on a sticker on the shield
 // [MarshallProprietary] byte mac[] = { ??? };
@@ -1284,7 +1295,8 @@ void loop()
 //    ina219b_volts = ina219b.getBusVoltage_V();
 //    ina219a.setVoltAverage();
 //    ina219a_volts = ina219a.getBusVoltage_V();
-
+// Look for serial commands
+  parseJson();
 }// END OF LOOP()
 
 
@@ -1671,4 +1683,3 @@ String getWeatherString() {
   weatherString.replace(" ", "");
   return weatherString;
 }
-

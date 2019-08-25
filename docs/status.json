@@ -1,0 +1,26 @@
+{
+  "response": {
+	"name": "status",
+	"time": 1566715030,
+	"solar": {
+		"voltage":14.6
+	},
+	"wind": {
+		"direction": "SW", 
+		"velocity": 10, 
+		"gusts": [
+			{
+				"time": 1566714030,
+				"direction": "S", 
+				"velocity": 20.6
+			},
+			{
+				"time": 1566713030,
+				"direction": "W", 
+				"velocity": 18.2
+			}
+
+		    ]
+		  }
+	}
+}

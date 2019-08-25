@@ -1,4 +1,9 @@
-
+//TODO: 
+// - use precompiler to do fixed calculations
+// - use constants for 'magic' numbers
+// - Store temp in C and let the client convert to locale 
+//    - browsers and mobile apps have lots more power and capabilities
+// 
 // WIND SPEED
 // Wind Speed is a 6 bit value, 1:1, up to 63mph wind in 1 mph increments.
 void put_windspeed(byte m, byte windSpeed) {

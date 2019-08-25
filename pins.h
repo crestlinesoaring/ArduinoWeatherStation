@@ -18,8 +18,8 @@ I2C device found at address 0x54  ! EEPROM_HWaddr0
 I2C device found at address 0x55  ! EEPROM_HWaddr1
 I2C device found at address 0x56  ! EEPROM_HWaddr2
 I2C device found at address 0x57  ! EEPROM_HWaddr3
-I2C device found at address 0x68  ! bme280a (internal)
-I2C device found at address 0x77  ! RTC
+I2C device found at address 0x68  ! RTC
+I2C device found at address 0x77  ! bme280a (internal)
 */
 
 // I2C devices
@@ -74,5 +74,3 @@ const byte DISCONNECT_12V = HIGH;       // power is disconnected
 const byte PIN_SOLAR_CONTROL = 16;      // Rel2, Solar panel connection; Enabled (default)=LOW=panel stays connected, Disabled=HIGH=panel is disconnected
 const byte SOLAR_CONNECTED = LOW;       // (default)=panel is disconnected
 const byte SOLAR_DISCONNECTED = HIGH;   // panel is disconnected
-
-
