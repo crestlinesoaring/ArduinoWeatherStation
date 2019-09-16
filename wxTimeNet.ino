@@ -818,3 +818,18 @@ String strMinutesToHHMM(int M) {
 
   return S;
 }
+
+/**
+ * Sunrise/Sunset calculator 
+ */
+ 
+void setupSunCalc() {
+  // Setup the sunrise calculator
+      setSyncProvider(RTC.get);                     // the function to get the time from the RTC
+  if (timeStatus() != timeSet) 
+    Serial.println("Unable to sync with the RTC");
+  else
+    Serial.println("RTC has set the system time");
+  sunCalc.init(wxConfig.gmtOffset*60, wxConfig.latitude, wxConfig.longitude);
+
+}

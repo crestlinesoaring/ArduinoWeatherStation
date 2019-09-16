@@ -20,7 +20,7 @@ int minutesAfterSunset = 30;                // Minutes after sunset to stay awak
 #include <avr/sleep.h> // to put Arduino to sleep
 #include <avr/power.h> // to put ADC etc to sleep
 #include <EEPROM.h>    // write to built-in Arduino EEPROM
-#include <Wire.h>      // I2C library
+#include <Wire.h>         //http://arduino.cc/en/Reference/Wire
 #include <math.h>      // Need cos() for calculating sunrise & sunset
 #include <Time.h>      // https://github.com/PaulStoffregen/Time  but this header doesn't seem to be needed?
 #include <TimeLib.h>   // https://github.com/PaulStoffregen/Time
@@ -31,6 +31,12 @@ int minutesAfterSunset = 30;                // Minutes after sunset to stay awak
 // TODO: change to site.h and include a sample site.h file
 
 #include "site.h"  // Site-specific parameters - configure for your site
+
+// Configuration definition
+#include "wxConfig.h"
+#include "eeprom.h"
+
+
 #include "pins.h"      // Header file for hardware dependent variables. Some hardware versions have different devices on different pins.
 
 
@@ -39,6 +45,11 @@ int minutesAfterSunset = 30;                // Minutes after sunset to stay awak
 #include <EthernetUdp.h>
 #include <utility/w5100.h>
 
+#include <sunMoon.h>
+
+// Sunrise calculator
+sunMoon sunCalc; 
+
 //#define logOneLine( line) logFile.println(line); Serial.println(line);
 //#define logOneLine2( line, base) logFile.println(line, base); Serial.println(line,base);
 //#define logSome( line) logFile.print(line); Serial.print(line);
@@ -46,6 +57,7 @@ int minutesAfterSunset = 30;                // Minutes after sunset to stay awak
 #define logOneLine2( line, base) Serial.println(line,base);
 #define logSome( line) Serial.print(line);
 
+// Dynamic configuration parameters to be saved in EEPROM
 
 Adafruit_INA219_5A ina219a(ina219a_HWaddr);     // First  ina219 sensor: A == Solar Panel
 Adafruit_INA219_5A ina219b(ina219b_HWaddr);     // Second ina219 sensor: B == Battery
@@ -53,7 +65,7 @@ BME280 bme280a;                                 // First  bme280 sensor: A == in
 BME280 bme280b;                                 // Second bme280 sensor: B == outside (someday we'll add this)
 
 
-
+//TODO: Move to external EEPROM
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // EEPROM cells have a write life of 100,000 writes.
 //    Once an hour, 24 hours: would last 10 years.
@@ -75,9 +87,12 @@ BME280 bme280b;                                 // Second bme280 sensor: B == ou
 //    90    Char minutes before Sunrise to wake, -120 to 120, Going negative means not to wake until after sunrise.
 //    91    Char minutes after  Sunset to sleep, -120 to 120. Going negative means go to sleep before sunset.
 //
+
 // RTC USED ADDRESSES:
 //   0x0B rtcWindSpeed, keep the windspeed so we can resume the MMA after a reboot
 //
+// EE_START_LOG-(EE_MAX_ADDRESS-16)  Log space
+
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 const int eePowerSave = 65; ///jjji go beyond ariadnes 64 bytes
@@ -325,7 +340,11 @@ struct wxCache_struct {
   // 4+4+8+8+8+10+6+5+1 = 54 = 7 bytes with 2 bits to spare. 
 };
 
+
+
 time_t wxCache_time;
+
+//TODO: move to wxConfig
 byte wxCache_count;
 byte wxCache_lastSaved;
 byte wxCache_lastSent;
@@ -399,7 +418,6 @@ SdFat sd;
 SdFile file;
 unsigned int sdPosition;
 const uint8_t chipSelect = 4;
-
 
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -500,6 +518,7 @@ void setup()
     //Enable the WatchDog, 8 second timeout.
     //wdt_enable(WDTO_8S);
     enableWatchdog();
+
 
     // Load initial values from EEPROM, and also set sane values for eeprom on a new Arduino. EEPROM starts out all 1's (255).
     initializeEEPROM();
@@ -888,7 +907,7 @@ void loop()
         }
 
         // Don't pull the plug if we're waiting for wifi to come up so we can send out a batch.
-        if (not uploadPending) {
+        if (not uploadPending && !wxConfig.stayAwake) {
           keepUbiquitiOn = false;
           EEPROM.update(eeKeepUbiOn, false);
           disableWifi();
@@ -945,6 +964,7 @@ void loop()
           // allpinslow turns all Mega pins to output and to low. Except inverted default "on" (Eth and U), and MWX sensor pins (input)
             Serial.println(F("GOING TO SLEEP!!"));  // print this before messing with pins
             Serial.flush(); //jjj wait for message to print 
+            
             Serial.end();   //jjj turn off TX0 so 16U2 ESD won't get pulled high
           
             cli();  //jjj clear interrupts just in case
@@ -1163,6 +1183,16 @@ void loop()
             disableEthernet();
             uploadPending = false;
           } // End every 5th minute: if (minute() %5 == 0)
+        } else { 
+          
+          // Check for save period prior to sunrise
+          if ((hour() >= wxConfig.startSampleTimeHour)
+            && (minutesToday < sunset) 
+            && (minute() % 5 == 0))   {
+            
+            // Save the tempWeatherString 
+            writeWeather(tempWeatherString); 
+          }
         }
         
       } // End "new minute()" (clock minute, not runtime minute)
