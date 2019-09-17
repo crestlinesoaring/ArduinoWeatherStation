@@ -417,16 +417,16 @@ void goToSleep(){
 } // end of sleep: Wakes only by reset until interrupts are set
 
 
-
 //Calculates each of the variables that wunderground is expecting
 //Expects to be called once a second, bases some calculations on that.
 void calcWeather()
 {
     //Calc winddir
     winddir = get_wind_direction();
-
+    
     //Calc windspeed
     //windspeedmph = get_wind_speed(); //This is calculated in the main loop on line 179
+    
 
     //Calc windgustmph
     //Calc windgustdir

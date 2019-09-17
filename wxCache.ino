@@ -6,6 +6,8 @@
 // 
 // WIND SPEED
 // Wind Speed is a 6 bit value, 1:1, up to 63mph wind in 1 mph increments.
+
+
 void put_windspeed(byte m, byte windSpeed) {
   m = m % 60;
   if (windSpeed > 63) windSpeed = 63;
