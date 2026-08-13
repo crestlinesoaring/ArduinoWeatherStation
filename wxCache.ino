@@ -83,7 +83,7 @@ float get_temp2f(byte m) {
   return wxCache[m].temp2 / 1.4;
 }
 
-//Poor conversions to C, but it's probably okay.
+//Poor conversions to C, but it's probably okay. // jjj 22 a BME data *IS* in Celsius, why convert back&forth?
 //Note the value is always stored in F, so there is some loss in accuracy.
 void put_temp2c(byte m, float c) {
   m = m % 60;

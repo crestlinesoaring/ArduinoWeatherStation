@@ -9,6 +9,9 @@
 //Returns the instataneous wind speed
 float get_wind_speed()
 {
+    #ifdef SIMULATE_WIND_SPEED
+      return(SIMULATE_WIND_SPEED);
+    #endif
     float deltaTime = millis() - lastWindCheck; // (ex: 750ms)
     deltaTime /= 1000.0; //Covert to seconds
     float windSpeed = (float)windClicks / deltaTime; // (ex, 3 clicks / 0.750s = 4 clicks per second)
@@ -26,7 +29,11 @@ int get_wind_direction()
 {
     unsigned int adc;
 
-    adc = analogRead(WDIR); // get the current reading from the sensor
+    # ifndef SIMULATE_WIND_DIRECTION
+      adc = analogRead(WDIR); // get the current reading from the sensor
+    #else
+      adc = SIMULATE_WIND_DIRECTION;
+    #endif
     winddirRaw = adc;       // Save the ADC value for troubleshooting.
 
     // The following table is ADC readings for the wind direction sensor output, sorted from low to high.
@@ -114,8 +121,8 @@ void handleSerial() {
 void enableSolar() {
   Serial.print(getTimeWithZeros());
   Serial.println(" - Solar panel ENABLED via enableSolar();");
-  pinMode(PIN_SOLAR_CONTROL, INPUT);                 // prepares Solar Panel control pin
-  digitalWrite(PIN_SOLAR_CONTROL, SOLAR_CONNECTED);     // turns Solar Panel on
+  pinMode(PIN_SOLAR_POWER, INPUT);                 // prepares Solar Panel control pin
+  digitalWrite(PIN_SOLAR_POWER, SOLAR_CONNECTED);     // turns Solar Panel on
 
 }
 
@@ -123,8 +130,8 @@ void enableSolar() {
 void disableSolar() {
   Serial.print(getTimeWithZeros());
   Serial.println(" - Solar panel DISABLED via disableSolar();");
-  pinMode(PIN_SOLAR_CONTROL, OUTPUT);                  // prepares Solar Panel control pin
-  digitalWrite(PIN_SOLAR_CONTROL, SOLAR_DISCONNECTED);    // turns Solar Panel off
+  pinMode(PIN_SOLAR_POWER, OUTPUT);                  // prepares Solar Panel control pin
+  digitalWrite(PIN_SOLAR_POWER, SOLAR_DISCONNECTED);    // turns Solar Panel off
 
 }
 
@@ -133,14 +140,17 @@ void disableSolar() {
 void enableCamBrain() {
   if (camStatus.BrainDesireOn == false) {
     Serial.println(F("Enabling CamBrain"));
-    digitalWrite(PIN_CamBrain_CONTROL, CamBrain_ON);
+    pinMode(PIN_CamBrain_POWER, INPUT_PULLUP);              // precharge capacitor
+    delay (2000);
+    pinMode(PIN_CamBrain_POWER, OUTPUT);   
+    digitalWrite(PIN_CamBrain_POWER, CamBrain_ON);
     camStatus.BrainDesireOn = true;
     EEPROM.put(eeCamStatus, camStatus);
   }
 }
 void disableCamBrain() {
   Serial.println(F("Disabling CamBrain"));
-  digitalWrite(PIN_CamBrain_CONTROL, CamBrain_OFF);
+  digitalWrite(PIN_CamBrain_POWER, CamBrain_OFF);
   camStatus.BrainDesireOn = false;
   EEPROM.put(eeCamStatus, camStatus);
 }
@@ -148,67 +158,48 @@ void disableCamBrain() {
 void enableCamNorth() {
   if (camStatus.NorthDesireOn == false) {
     Serial.println(F("Enabling CamNorth"));
+    pinMode(PIN_CamNorth_POWER, INPUT_PULLUP);              // precharge capacitor
+    delay (2000);                                           // let it charge up
+    pinMode(PIN_CamNorth_POWER, OUTPUT);
     camStatus.NorthDesireOn = true;
-    digitalWrite(PIN_CamNorth_CONTROL, CamNorth_ON);
+    digitalWrite(PIN_CamNorth_POWER, CamNorth_ON);
     EEPROM.put(eeCamStatus, camStatus);
   }
 }
 void disableCamNorth() {
   Serial.println(F("Disabling CamNorth"));
   camStatus.NorthDesireOn = false;
-  digitalWrite(PIN_CamNorth_CONTROL, CamNorth_OFF);
+  digitalWrite(PIN_CamNorth_POWER, CamNorth_OFF);
   EEPROM.put(eeCamStatus, camStatus);
 }
 
 void enableCamSouth() {
   if (camStatus.SouthDesireOn == false) {
     Serial.println(F("Enabling CamSouth"));
-    digitalWrite(PIN_CamSouth_CONTROL, CamSouth_ON);
+    pinMode(PIN_CamSouth_POWER, INPUT_PULLUP);              // precharge capacitor
+    delay (2000);                                      // let it charge up
+    pinMode(PIN_CamSouth_POWER, OUTPUT);
+    digitalWrite(PIN_CamSouth_POWER, CamSouth_ON);
     camStatus.SouthDesireOn = true;
     EEPROM.put(eeCamStatus, camStatus);
   }
 }
 void disableCamSouth() {
-  Serial.println(F("Disabling CamSouth"));
-  digitalWrite(PIN_CamSouth_CONTROL, CamSouth_OFF);
+  Serial.println(F("disable CamSouth"));
+  digitalWrite(PIN_CamSouth_POWER, CamSouth_OFF);
   camStatus.SouthDesireOn = false;
   EEPROM.put(eeCamStatus, camStatus);
-}
-
-// Called to request that a cameras "snapshot" be taken. This process will change, but initially it means
-// to turn on the cameras next time the ubiquiti turns on, and leave the ubiquiti on for at least 2 minutes.
-// Then turn it all back off again using finishCamSnapshot() below.
-void requestCamSnapshot() {
-  camSnapshot = now();
-  camSnapshotSaveCamStatus.NorthDesireOn = camStatus.NorthDesireOn;
-  camSnapshotSaveCamStatus.SouthDesireOn = camStatus.SouthDesireOn;
-  if (not camSnapshotSaveCamStatus.NorthDesireOn) { 
-    digitalWrite(PIN_CamNorth_CONTROL, CamNorth_ON);
-    camStatus.NorthDesireOn = true;
-  }
-  if (not camSnapshotSaveCamStatus.SouthDesireOn) { 
-    digitalWrite(PIN_CamSouth_CONTROL, CamSouth_ON);
-    camStatus.SouthDesireOn = true;
-  }
-}
-void checkCamSnapshot() {
-  //Check that it's been ~120 seconds since snapshot was requested
-  if (camSnapshot and (now() >= camSnapshot + 115)) {
-    camSnapshot = 0;
-    if (not camSnapshotSaveCamStatus.NorthDesireOn) { disableCamNorth(); }
-    if (not camSnapshotSaveCamStatus.SouthDesireOn) { disableCamSouth(); }
-    disableWifi();
-  }
 }
 
 // Called from Setup() to load memory values from EEPROM.
 // Also looks for 255 values, which suggest a new Arduino or a newly added EEPROM variable that needs initialization
 void initializeEEPROM() {
 
-  if (EEPROM.read(eePowerSave) == 255) {
-    Serial.println(F("EEPROM eePowerSave was 255, is this a new Arduino? Setting to false (0)."));
-    EEPROM.update(eePowerSave, false);
-  }
+  // not used anymore
+  /*if (EEPROM.read(eeShutDown) == 255) {
+    Serial.println(F("EEPROM eeShutDown was 255, is this a new Arduino? Setting to false (0)."));
+    EEPROM.update(eeShutDown, false);
+  }*/
 
   if (EEPROM.read(eeKeepUbiOn) == 255) {
     Serial.println(F("EEPROM eeKeepUbiOn was 255, is this a new Arduino? Setting to false (0)."));
@@ -240,33 +231,6 @@ void initializeEEPROM() {
 //  EEPROM.put(eeBootCounter, eeUIntTemp + 1);
 
   
-  // Check EEPROM to see if we should be in power save mode. If so, shut some stuff off immediately.
-  Serial.print(F("Reading EEPROM to see power save state: "));
-  if (EEPROM.read(eePowerSave)) {
-    Serial.println(F("Power Save. Shutting off Eth and Ubiquiti... ")); //jjj ln
-    powerSave = true;
-    isDaytime = false;
-
-    disableWifi();
-    disableEthernet();
-
-  } else {
-    Serial.print(F("No power save. Turning on Eth and Ubiquiti... "));
-    powerSave = false;
-    isDaytime = true;
-
-    // Now that we send every 5 minutes, don't turn on until it's time to turn on.
-    if (keepUbiquitiOn) {
-      enableWifi();
-      enableEthernet();
-    } else {
-      disableWifi();
-      disableEthernet();
-    }
-
-  }
-  Serial.println("Done.");
-  Serial.println();
 
   //Populate a struct with saved camera state so camera on/off (powered/unpowered) state can persist through pboots.
   EEPROM.get(eeCamStatus, camStatus);
@@ -274,147 +238,141 @@ void initializeEEPROM() {
   if (camStatus.SouthDesireOn) { camStatus.SouthDesireOn = false; enableCamSouth(); }
   if (camStatus.BrainDesireOn) { camStatus.BrainDesireOn = false; enableCamBrain(); }
   
-
   //Populate the wake/sleep times
   EEPROM.get(eeMinutesBeforeSunrise, eeCharTemp);
   minutesBeforeSunrise = eeCharTemp;
   EEPROM.get(eeMinutesAfterSunset, eeCharTemp);
   minutesAfterSunset = eeCharTemp;
-
 }
 
+
 void goToSleep(){
-  //jjjsleep 
-  //jjj Sleep turns all Mega pins to output and to low (except inverted default "on" (Eth and U), and MWX sensor pins)
-  //jjj sets Mega to it's lowest power state and disables interrupts. Only a reset (Pboot) brings it back to life.
-  //jjj decision of when to sleep must take into account the Pboot time.
+  
+  // Disables the entire station until next hardware reset.
+
+  keepUbiquitiOn = false;
+  EEPROM.update(eeKeepUbiOn, false);
+  disableWifi();
+  disableEthernet();
+  disableCamBrain();
+  disableCamNorth();
+  disableCamSouth();
+
+  // Sleep turns all Mega pins to output and to low (except inverted default "on" (Eth and U), and MWX sensor pins)
+  // Sets Mega to it's lowest power state and disables interrupts. Only a reset (Pboot) brings it back to life.
+  // Decision of when to sleep must take into account the Pboot time.
   // If Pboot time is earlier than "sunrise-1h", then sleep should not be called for the last hour.
-  // begin of sleep
-  // shut down or power down external peripherals
-  // should be done at some point by (de-)powering with Mega's pins
+  // Shut down or power down external peripherals
+  // Should be done at some point by (de-)powering with Mega's pins
+    
+  // Write the lowest voltage seen all day. Starts fresh each new day.
+  EEPROM.get(eeVoltsLowestDay, eeByteTemp);
+  if (day() == eeByteTemp) {
+    EEPROM.get(eeVoltsLowestSeen, eeByteTemp);
+    if ((byte)voltsLowestSeen < eeByteTemp) {
+      EEPROM.put(eeVoltsLowestSeen, (byte)(voltsLowestSeen * 10.0));
+    }
+  } else {
+    EEPROM.put(eeVoltsLowestSeen, (byte)(voltsLowestSeen * 10.0));
+    EEPROM.put(eeVoltsLowestDay, (byte)day());
+  }
+  ina219a_solar.enterPowerSave();       // powering down two INAs saves 2mA
+  ina219b_battery.enterPowerSave();
 
-  // Morning: don't go back to sleep if it's within 40 minutes of Wake time, because we only wake once an hour.
-  if ((minutesToday < sunrise - minutesBeforeSunrise - 40) or (minutesToday > sunset)) {
-
-    // Increment a sleep counter so we have an idea of how often we go to sleep.
-    EEPROM.get(eeSleepCounter, eeUIntTemp);
-    EEPROM.put(eeSleepCounter, eeUIntTemp + 1);
-
-    // Turn off the cameras at night. This might change but for now we want to make sure they sleep when the Arduino does.
-    keepUbiquitiOn = false;
-    EEPROM.update(eeKeepUbiOn, false);
-    disableCamBrain();
-    disableCamNorth();
-    disableCamSouth();
-
-    ina219a.enterPowerSave();       //jjj powering down two INAs saves 2mA
-    ina219b.enterPowerSave();
-
-    // We set the sensor in "forced mode" to force one reading.
-    // After the reading the sensor will go to sleep mode.
-    uint8_t valuea = bme280a.readRegister(BME280_CTRL_MEAS_REG);
-    valuea = (valuea & 0xFC) + 0x01;
-    bme280a.writeRegister(BME280_CTRL_MEAS_REG, valuea);
-    uint8_t valueb = bme280b.readRegister(BME280_CTRL_MEAS_REG);
-    valueb = (valueb & 0xFC) + 0x01;
-    bme280b.writeRegister(BME280_CTRL_MEAS_REG, valueb);
-    // Measurement Time (as per BME280 datasheet section 9.1)
-    //  ~ 9.3ms for current settings
-    delay(10);
+  // We set the sensor in "forced mode" to force one reading.
+  // After the reading the sensor will go to sleep mode.
+  uint8_t valuea = bme280a.readRegister(BME280_CTRL_MEAS_REG);
+  valuea = (valuea & 0xFC) + 0x01;
+  bme280a.writeRegister(BME280_CTRL_MEAS_REG, valuea);
+  uint8_t valueb = bme280b.readRegister(BME280_CTRL_MEAS_REG);
+  valueb = (valueb & 0xFC) + 0x01;
+  bme280b.writeRegister(BME280_CTRL_MEAS_REG, valueb);
+  // Measurement Time (as per BME280 datasheet section 9.1)
+  //  ~ 9.3ms for current settings
+  delay(10);
   
   // power down EEPROM? and RTC?
   
   // allpinslow turns all Mega pins to output and to low. Except inverted default "on" (Eth and U), and MWX sensor pins (input)
-    Serial.println(F("GOING TO SLEEP!!"));  // print this before messing with pins
-    Serial.flush(); //jjj wait for message to print 
-    Serial.end();   //jjj turn off TX0 so 16U2 ESD won't get pulled high
+  Serial.println(F("GOING TO SLEEP!"));
+  Serial.flush(); // wait for message to print 
+  Serial.end();   // turn off TX0 so 16U2 ESD won't get pulled high
   
-    cli();  //jjj clear interrupts just in case
+  cli();  //jjj clear interrupts just in case
   
   // turn off power to SD in case it was left on
-    delay(500);                              //jjjSD wait for a second for SD card closure
-    PORTF &= ~_BV (7) & ~_BV (6) & ~_BV (4) &~_BV (2) & ~_BV (1) & ~_BV (0);  //jjj turn off (0V) A5 to A7 and all other SD pins to unpower SD card reader
-  
-    // Analog pins, set pins to output to prevent floating inputs
-    pinMode(A0, OUTPUT);
-    pinMode(A1, OUTPUT);
-    pinMode(A2, OUTPUT);
-    pinMode(A3, OUTPUT);
-    pinMode(A4, OUTPUT);
-    pinMode(A5, OUTPUT);
-    pinMode(A6, OUTPUT);
-    pinMode(A7, OUTPUT);
-    pinMode(A8, OUTPUT);
-    pinMode(A9, OUTPUT);
-    pinMode(A10, OUTPUT);
-    pinMode(A11, OUTPUT);
-    pinMode(A12, OUTPUT);
-    pinMode(A13, OUTPUT);
-    pinMode(A14, OUTPUT);
-    pinMode(A15, OUTPUT);
-  
-    digitalWrite(A0, LOW);
-    digitalWrite(A1, LOW);
-    digitalWrite(A2, LOW);
-    digitalWrite(A3, LOW);
-    digitalWrite(A4, LOW);
-    digitalWrite(A5, LOW);
-    digitalWrite(A6, LOW);
-    digitalWrite(A7, LOW);
-    digitalWrite(A8, LOW);
-    digitalWrite(A9, LOW);
-    digitalWrite(A10, LOW);
-    digitalWrite(A11, LOW);
-    digitalWrite(A12, LOW);
-    digitalWrite(A13, LOW);
-    digitalWrite(A14, LOW);
-    digitalWrite(A15, LOW);
-    pinMode(WSPEED, INPUT);         //jjj MWX sensor, external pullup attached, stable
-    pinMode(WDIR, INPUT);           //jjj MWX sensor, external pullup attached, stable
-  
-    // Digital pins
-    Wire.end();                     //jjj just to make sure i2c won't pullup
-    pinMode(SCL, INPUT);            //jjj external pullup attached, stable
-    pinMode(SDA, INPUT);            //jjj external pullup attached, stable
-  
-  
-    for (int i = 0; i <= 53; i++) 
-    {
-      pinMode(i, OUTPUT);           //jjj set pins to output to prevent floating inputs
-      if (PIN_ETH_CONTROL == i) 
-        {
-          digitalWrite(i, HIGH);    //jjj is inverted, must be high
-        }
-      else if (PIN_UBIQUITI_CONTROL == i) 
-        {
-          digitalWrite(i, HIGH);    //jjj is inverted, must be high
-        }
-      else 
-        {
-          digitalWrite(i, LOW);     //jjj all others = LOW   
-        }
-  
-    }
-  
-    cli();  //jjj clear interrupts just in case
-  
-    ADCSRA = 0; //jjj disable ADC before freezing it below
-    set_sleep_mode(SLEEP_MODE_PWR_DOWN);  // prepare the sleep mode
-    power_all_disable();                  // turn off all internal peripherals just in case
-    power_adc_disable();                  // turn off all internal peripherals just in case
-    power_spi_disable();
-    power_usart0_disable();
-    power_usart2_disable();
-    power_timer1_disable();
-    power_timer2_disable();
-    power_timer3_disable();
-    power_timer4_disable();
-    power_timer5_disable();
-    power_twi_disable();
-  
-    sleep_mode();       // finally, go to sleep
+  delay(500);                              //jjjSD wait for a second for SD card closure
+  PORTF &= ~_BV (7) & ~_BV (6) & ~_BV (4) &~_BV (2) & ~_BV (1) & ~_BV (0);  //jjj turn off (0V) A5 to A7 and all other SD pins to unpower SD card reader
+
+  // Analog pins, set pins to output to prevent floating inputs
+  pinMode(A0, OUTPUT);
+  pinMode(A1, OUTPUT);
+  pinMode(A2, OUTPUT);
+  pinMode(A3, OUTPUT);
+  pinMode(A4, OUTPUT);
+  pinMode(A5, OUTPUT);
+  pinMode(A6, OUTPUT);
+  pinMode(A7, OUTPUT);
+  pinMode(A8, OUTPUT);
+  pinMode(A9, OUTPUT);
+  pinMode(A10, OUTPUT);
+  pinMode(A11, OUTPUT);
+  pinMode(A12, OUTPUT);
+  pinMode(A13, OUTPUT);
+  pinMode(A14, OUTPUT);
+  pinMode(A15, OUTPUT);
+
+  digitalWrite(A0, LOW);
+  digitalWrite(A1, LOW);
+  digitalWrite(A2, LOW);
+  digitalWrite(A3, LOW);
+  digitalWrite(A4, LOW);
+  digitalWrite(A5, LOW);
+  digitalWrite(A6, LOW);
+  digitalWrite(A7, LOW);
+  digitalWrite(A8, LOW);
+  digitalWrite(A9, LOW);
+  digitalWrite(A10, LOW);
+  digitalWrite(A11, LOW);
+  digitalWrite(A12, LOW);
+  digitalWrite(A13, LOW);
+  digitalWrite(A14, LOW);
+  digitalWrite(A15, LOW);
+  pinMode(WSPEED, INPUT);         //jjj MWX sensor, external pullup attached, stable
+  pinMode(WDIR, INPUT);           //jjj MWX sensor, external pullup attached, stable
+
+  // Digital pins
+  Wire.end();                     //jjj just to make sure i2c won't pullup
+  pinMode(SCL, INPUT);            //jjj external pullup attached, stable
+  pinMode(SDA, INPUT);            //jjj external pullup attached, stable
+
+    
+  for (int i = 0; i <= 53; i++) {
+    pinMode(i, OUTPUT);           // Iterate over all pins and set them to output to prevent floating inputs
+    if (PIN_ETH_POWER == i) {digitalWrite(i, HIGH);} // is inverted, must be high
+    else if (PIN_UBIQUITI_POWER == i) {digitalWrite(i, HIGH);} // is inverted, must be high
+    else {digitalWrite(i, LOW);}     // all others = LOW   
   }
-} // end of sleep: Wakes only by reset until interrupts are set
+    
+  cli();  //jjj clear interrupts just in case
+
+  ADCSRA = 0; //jjj disable ADC before freezing it below
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);  // prepare the sleep mode
+  power_all_disable();                  // turn off all internal peripherals just in case
+  power_adc_disable();                  // turn off all internal peripherals just in case
+  power_spi_disable();
+  power_usart0_disable();
+  power_usart2_disable();
+  power_timer1_disable();
+  power_timer2_disable();
+  power_timer3_disable();
+  power_timer4_disable();
+  power_timer5_disable();
+  power_twi_disable();
+
+  sleep_mode();       // finally, go to sleep
+  // End of sleep: wakes only by hardware reset!
+}
 
 
 
@@ -497,9 +455,9 @@ void calcWeather()
 
     //Total rainfall for the day is calculated within the interrupt
     //Calculate amount of rainfall for the last 60 minutes
-    rainin = 0;
-    for(int i = 0 ; i < 60 ; i++)
-        rainin += rainHour[i];
+// jjj 22a     rainin = 0;
+// jjj 22a     for(int i = 0 ; i < 60 ; i++)
+// jjj 22a         rainin += rainHour[i];
     
 }
 
@@ -588,7 +546,7 @@ void printWeather()
   // 13: current in mA
   //(FIXME: same as ext sensor since we only have one)
   Serial.print(charComma);
-  Serial.print(ina219a_ma, 2);
+  Serial.print(ina219a_solar_ma, 2);
   Serial.print("mA");
 
   // 14: voltage onboard, ~5v source
@@ -597,7 +555,7 @@ void printWeather()
 
   // 15: voltage battery, possibly inferred but same as 14 for now.
   Serial.print(charComma);
-  Serial.print(ina219a_volts,2);
+  Serial.print(ina219a_solar_volts,2);
 
   // 16: light level, referenced to voltage I think
   Serial.print(charComma);
@@ -660,14 +618,13 @@ void printWeather()
   Serial.print(charComma);
   Serial.print(winddirRaw);
 
-  // 21: print ina219a's voltage, current
+  // 21: print ina219a_solar's voltage, current
   Serial.print(charComma);
-  Serial.print(ina219a_volts);
+  Serial.print(ina219a_solar_volts);
   Serial.print(charComma);
-  Serial.print(ina219a_ma);
+  Serial.print(ina219a_solar_ma);
 
   // NEWLINE:
   Serial.println();
 
 }
-

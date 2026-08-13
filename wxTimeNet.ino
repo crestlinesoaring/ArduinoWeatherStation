@@ -3,19 +3,24 @@
  * Functions for handling time and some network related duties. Like NTP.
  * 
  */
-
 /* Check for incoming data on the Ethernet server.
  *  Typically stuff like reset requests, maybe update EEPROM values, print current data cache, etc...
  */
-void checkEthIncomingData() {
+bool checkEthIncomingData() {
   if (wifiEnabled) {
     usTemp = millis();  // using usTemp so we can use msTemp as a timeout timer below.
     bool timeoutWarningGiven = false;
     bool boolQuitSession = false;
+    // Local variables for setting the RTC:
+    unsigned long RTCSetTimeoutStart;
+    bool RTCSetTimeoutExceeded;
+    time_t RTCSett;
+    tmElements_t RTCSettm;
     wdt_reset();
     incomingClient = server.available();
     if (incomingClient) {
-      Serial.println(F("  --=Ethernet client connected!!=-- "));
+      Serial.println(F("Ethernet client connected!"));
+      incomingClient.println(F("Hi there, it's me, the Marshall weather station! Send '?' for help."));
       // Probably just waiting here is enough to cause a WatchDog reset, which is all we really need.
       while (incomingClient.connected()) {
         //Serial.print(F("Entering While incomingClient.connected() at ms: "));
@@ -23,12 +28,14 @@ void checkEthIncomingData() {
         if (incomingClient.available()) {
           msTemp = millis();
           char c = incomingClient.read();
+          while(incomingClient.available()) incomingClient.read(); //clean buffer just to be safe
           char fileName[13];
           String strFileName;
           int i;
           int rtcSetStatus;
-          Serial.write(c);
-          incomingClient.print(c);
+          // Echoing disabled by JLT 2023
+          // Serial.write(c);
+          // incomingClient.print(c);
 
           switch (c) {
             case 'q':
@@ -40,18 +47,21 @@ void checkEthIncomingData() {
               wdt_reset();
               Serial.println(F("---===---===--- Client hit R and [enter], which causes the reboot ---===---===---"));
               incomingClient.println(F("R and Enter detected. Rebooting and disconnecting."));
-              delay(100);
-              Serial.println(); Serial.print(" ");
-              i = 0;
-              while(true) { // this would surely cause a reboot, except we never seem to get here.
-                Serial.print(8);
-                Serial.print(i);
-                incomingClient.print(" ");
-                incomingClient.print(i);
-                i++;
-                delay(500);
-              } // End while (true) for loop until Watchdog Reset
-              break; // End of 'R'eset
+              wdt_disable();              // kill interference
+              wdt_enable(WDTO_15MS);      // set WD reset timeout to 15msec
+              while (true);                  // wait for WD to happen
+              break;                      // End of 'R'eset
+
+            case 'M':                     // 'M'anually enable (no-timeout) TFTP mode and make a Reset to trigger TFTP mode
+              wdt_reset();                // prevent timeout for now
+              Serial.println(F("---===---===--- Client hit M and [enter], which sets the TFTP EEPROM flag and issues a WD reset to trigger TFTP mode---===---===---"));
+              incomingClient.println(F("M and Enter detected. Seeting flag, rebooting and disconnecting."));
+              EEPROM.write(02,0xDD);      // enableUpdateMode, set the TFTP mode via flag (0xDD) in EEPROM location 02
+              delay(100);                 // strangely must wait here for it to work
+              wdt_disable();              // kill interference
+              wdt_enable(WDTO_15MS);      // set WD reset timeout to 15msec
+              while (true);               // wait 15msec for WD to happen, Mega will be in TFTP mode after reset
+              break;                      // End of 'M'anual TFTP + reset
               
             case 'C': // for Cache, dump what cached data we have
               incomingClient.println(F("C and Enter detected. Dumping what we have cached in memory. Be sure to disconnect."));
@@ -78,7 +88,6 @@ void checkEthIncomingData() {
             case 'G':
             case 'g': // for Get Camera Snapshot (a stretch, but I'm running out of letters)
               incomingClient.print(F("<-- g detected. Getting a camera snapshot. "));
-              requestCamSnapshot();
 
               break; // End of 'g'et Camera Snapshot
               
@@ -106,7 +115,46 @@ void checkEthIncomingData() {
               incomingClient.println(F(" Done!"));
               break;
               
-            case 'H':
+            case 'H': // Set time of RTC.
+              incomingClient.println(F("H detected. Set RTC by providing timestamp."));
+              RTCSetTimeoutStart = millis();
+              RTCSetTimeoutExceeded = false;
+              incomingClient.println(F("Expected format: year,month,day,hour,minute,second"));
+              incomingClient.println(F("Where: year has four digits, month is 1-12, day is 1-31, hour is 0-23, minute and second are 0-59."));
+              incomingClient.println(F("Type anything else to abort. Timeout is 300 seconds."));
+              while(!incomingClient.available()){ //wait for user input resetting the watchdog_timer()
+                wdt_reset(); //reset watchdog while wating
+                msTemp = millis(); //Reset general client connection timeout while waiting.
+                delay(100);
+                if(millis()-RTCSetTimeoutStart > 300000){ 
+                  incomingClient.println(F("Timeout for RTC setting exceeded. Send 'H' to retry."));
+                  RTCSetTimeoutExceeded = true;
+                  break;
+                }
+              }
+              if (RTCSetTimeoutExceeded) break;
+              if (incomingClient.available() < 12) incomingClient.println(F("Error: Timestamp too short! Send 'H' again to retry."));
+              else {
+                int y = incomingClient.parseInt();
+                if (y < 1000) incomingClient.println(F("Error: Year must be > 1000!"));
+                else {
+                  RTCSettm.Year = CalendarYrToTm(y);
+                  RTCSettm.Month = incomingClient.parseInt();
+                  RTCSettm.Day = incomingClient.parseInt();
+                  RTCSettm.Hour = incomingClient.parseInt();
+                  RTCSettm.Minute = incomingClient.parseInt();
+                  RTCSettm.Second = incomingClient.parseInt();
+                  RTCSett = makeTime(RTCSettm);
+                  RTC.set(RTCSett);
+                  setTime(RTCSett);
+                  incomingClient.println(F("Setting RTC succesful! New time is:"));
+                  incomingClient.print(getDateWithZeros()); incomingClient.print(" "); incomingClient.println(getTimeWithZeros());
+                  while (incomingClient.available() > 0) incomingClient.read(); //flush buffer
+                }
+              }
+              msTemp = millis(); //Reset general client connection timeout.
+              break;
+              
             case 'S': // for turn South camera on (formerly called Hang Glider launch camera)
               if (camStatus.SouthDesireOn) {
                 incomingClient.print(F("S detected, South camera was ON, turning off South camera..."));
@@ -164,10 +212,10 @@ void checkEthIncomingData() {
               incomingClient.println(getTimeWithZeros());
               returnStatus = "";
               compareRTCwithNTP();
-//              incomingClient.print(F("NTP time, raw: "));
-//              incomingClient.println(String(getNtpTime()));
-//              incomingClient.print(F("RTC time, raw: "));
-//              incomingClient.println(String(RTC.get()));
+              // incomingClient.print(F("NTP time, raw: "));
+              // incomingClient.println(String(getNtpTime()));
+              // incomingClient.print(F("RTC time, raw: "));
+              // incomingClient.println(String(RTC.get()));
               incomingClient.println();
               incomingClient.print(F("NTP check finished. Time is: "));
               incomingClient.println(getTimeWithZeros());
@@ -175,7 +223,8 @@ void checkEthIncomingData() {
               break;
               
             case 'T':   // Add one hour to Time
-              incomingClient.print(("T detected, adding one hour to RTC time for Daylight Saving update. Current time is: "));
+              incomingClient.println(F("H detected. Set RTC by providing timestamp."));
+              incomingClient.print(F("T detected, adding one hour to RTC time for Daylight Saving update. Current time is: "));
               incomingClient.println(getTimeWithZeros());
               rtcSetStatus = RTC.set(now() + 3600);
               incomingClient.print(F("RTC is now set, return status: "));
@@ -186,8 +235,8 @@ void checkEthIncomingData() {
               incomingClient.println(F("---===  Note!! It takes 10 minutes for the system time to update after RTC fix!! ===------"));
               break;
               
-            case 't':   // Add one hour to Time
-              incomingClient.print(("t detected, subtracting one hour from time for Daylight Saving update. Current time is: "));
+            case 't':   // Subtract one hour from Time
+              incomingClient.print(F("t detected, subtracting one hour from time for Daylight Saving update. Current time is: "));
               incomingClient.println(getTimeWithZeros());
               rtcSetStatus = RTC.set(now() - 3600);
               incomingClient.print(F("RTC is now set, return status: "));
@@ -250,6 +299,7 @@ void checkEthIncomingData() {
               incomingClient.println(F("C: Cache, print cached weather lines."));
               incomingClient.println(F("D: Dump SD file for today (only valid if SD card exists)."));
               incomingClient.println(F("U: Toggle ubiquiti between Always On and Off except for send every 5 minutes. Always off at night regardless."));
+              incomingClient.println(F("H: Set time and date of RTC."));
               incomingClient.println(F("B: Camera viewing Brain."));
               incomingClient.println(F("S: Camera viewing South."));
               incomingClient.println(F("N: Camera viewing North."));
@@ -271,19 +321,18 @@ void checkEthIncomingData() {
               incomingClient.print(F("  CamSouth desired on:    ")); incomingClient.println(camStatus.SouthDesireOn);
               incomingClient.print(F("  CamNorth desired on:    ")); incomingClient.println(camStatus.NorthDesireOn);
               incomingClient.print(F("  CamBrain desired on:    ")); incomingClient.println(camStatus.BrainDesireOn);
-              incomingClient.print(F("  CamSnapshot value:      ")); incomingClient.println(camSnapshot);
               incomingClient.print(F("  Ubiquiti Keep on:       ")); incomingClient.println(EEPROM.read(eeKeepUbiOn));
-              incomingClient.print(F("  Solar   V: "));              incomingClient.print(String(ina219a_volts, 2));
-                incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219a_ma, 0));
-              incomingClient.print(F("  Battery V: "));              incomingClient.print(String(ina219b_volts, 2));
-                incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219b_ma, 0));
+              incomingClient.print(F("  Solar   V: "));              incomingClient.print(String(ina219a_solar_volts, 2));
+                incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219a_solar_ma, 0));
+              incomingClient.print(F("  Battery V: "));              incomingClient.print(String(ina219b_battery_volts, 2));
+                incomingClient.print(F(", mA: "));                     incomingClient.println(String(ina219b_battery_ma, 0));
               incomingClient.print(F("  Lowest batt voltage since boot:  "));  incomingClient.println(String(voltsLowestSeen, 2));
               incomingClient.print(F("  Lowest batt voltage last sleep:  "));  incomingClient.println(String(EEPROM.read(eeVoltsLowestSeen) / 10.0, 1));
               incomingClient.print(F("  Lowest batt voltage day:  "));         incomingClient.println(String(EEPROM.read(eeVoltsLowestDay)));
               incomingClient.print(F("  Battery drain minutes: "));  incomingClient.print(String(battDrainMinutes));
                 incomingClient.print(F(", mAm: "));                    incomingClient.print(String(battDrainmA));
                 incomingClient.print(F(", mAh = "));                   incomingClient.println(String(battDrainmA / 60));
-              incomingClient.print(F("  ina219_MMA loops: "));       incomingClient.println(String(ina219a_MMAloops));
+              incomingClient.print(F("  ina219_MMA loops: "));       incomingClient.println(String(ina219a_solar_MMAloops));
               incomingClient.print(F("  Temp internal: "));          incomingClient.println(String(bme280b.readTempC()));
               incomingClient.print(F("  Humidity int:  "));          incomingClient.println(String(bme280b.readFloatHumidity()));
               incomingClient.print(F("  Sunrise / Wake: "));
@@ -334,9 +383,10 @@ void checkEthIncomingData() {
       Serial.print(millis() - usTemp);
       Serial.println("ms.");
       telnetSeconds = (millis() - usTemp) / 1000;
+      return true; // return true if a telnet communication took place
     }
-  } // End of incoming Ethernet connection handling
-
+  }
+  return false; //return false if no telnet communication took place
 }
 
 void setKeepUbiquitiOn(bool v) {
@@ -344,122 +394,142 @@ void setKeepUbiquitiOn(bool v) {
     EEPROM.update(eeKeepUbiOn, v);
 }
 
+// Activate power supply and SPI bus of Ethernet card. Nothing else! 
+void ethernetPowerOn(){
+  // Turn shield on:
+  pinMode       (PIN_ETH_RESET, OUTPUT);          // prepare ETH reset control pin
+  digitalWrite  (PIN_ETH_RESET, ETH_RESET);       // turn ETH reset on, transition to power with reset active  
+  pinMode       (PIN_ETH_POWER, OUTPUT);          // prepare ETH power control pin
+  digitalWrite  (PIN_ETH_POWER, ETH_ON);          // turn ETH shield on
+  delay(100);
+  digitalWrite  (PIN_ETH_RESET, ETH_NORESET);     // turn ETH reset off
+  delay(100);
+  // Activate SPI bus:
+  pinMode       (SCK,   OUTPUT);
+  pinMode       (MISO,  INPUT);
+  pinMode       (MOSI,  OUTPUT);
+  digitalWrite  (MISO,  HIGH);                    // SPI pullup
+  pinMode       (SS,    OUTPUT);
+  digitalWrite  (SS,    HIGH);
+  Ethernet.init (SS);                             // This pin ChipSelects the W5500 board on the SPI bus
+  delay(100);                                     // jjjjj? delay needed?? from 1500
+  wdt_reset();
+}
+
+
+// Deactivate power supply and SPI bus of Ethernet card. Nothing else! 
+void ethernetPowerOff(){
+  // Deactivate SPI bus:
+  SPI.end(); 
+  pinMode       (MOSI,  INPUT);                   // prevents leakage through W5500 ESD diodes
+  pinMode       (MISO,  INPUT);                   // prevents leakage through ESD diodes
+  pinMode       (SCK,   INPUT);                   // prevents leakage through ESD diodes
+  pinMode       (SS,    INPUT);                   // prevents leakage through ESD diodes
+  // Turn shield off:
+  pinMode       (PIN_ETH_RESET, OUTPUT);          // prepare ETH reset control pin
+  digitalWrite  (PIN_ETH_RESET, ETH_RESET);       // turn on (and keep on) ETH reset for smoother power transition 
+  pinMode       (PIN_ETH_POWER, OUTPUT);          // prepare ETH power control pin
+  digitalWrite  (PIN_ETH_POWER, ETH_OFF);         // turn ETH shield off
+}
+
+
 // Turns on power for components needed for network connectivity
 void enableEthernet() {
-
   // DON'T KEEP ENABLING ONCE IT'S ALREADY ENABLED! It's wasteful. Also it makes an endless loop if the 30 seconds crosses the "second zero" boundary.
   if (ethEnabled) return;
-
-//jjj20f first turn Ethernet shield on
-  pinMode(PIN_ETH_CONTROL, OUTPUT);                     // prepares ETH power control pin
-  digitalWrite(PIN_ETH_CONTROL, ETH_ENABLED);           // turns ETH shield on
-  
-  // ETH takes ~2 seconds to be ready to send when turned on // jjj 0 4 8 
-  for (int i=0; i>0; i--) {
-
-    // Count down the seconds on Serial. Character 8 is the backspace.
-    Serial.write(8);
-    if (i > 9) {
-      Serial.write(8);
-    }
-    Serial.print(i - 1);
-
-    wdt_reset();
-    delay(1000);
-  }
-
-  PrintSpiPinMode();
-  
-  Serial.println();
-  Serial.print(getTimeWithZeros());
-  Serial.println(F(": enableEthernet() called, startup delay ? seconds:  0")); //jjj ln, ?
-
-//jjj20f  Re-enable just in case the pins were disabled during power save.
-  pinMode(SS,   OUTPUT);
-  pinMode(SCK,  OUTPUT);
-  pinMode(MISO, INPUT);
-  pinMode(MOSI, OUTPUT);
-  digitalWrite (MISO, HIGH);    //jjj20f pullup
-  digitalWrite (SS, HIGH);      //jjj20f to select spi master
-//jjj20f   digitalWrite (SCK, LOW);     //jjj20f is low already
-//jjj20f   digitalWrite (MOSI, LOW);    //jjj20f  is low already
-//jjj20f SPI will be fully initialized by Ethernet.begin 
-
-  wdt_reset(); //jjj
-  Serial.println("Ethernet.begin; ");
+  wdt_reset();
+  Serial.println("Executing enableEthernet()."); 
+  ethernetPowerOn();                              // Activate power supply and SPI bus
   Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
-    delay(1000); //jjj20d back to 1000 
-    W5100.setRetransmissionTime(0x07D0);  // reduce wait
-    W5100.setRetransmissionCount(4);
-  Serial.println("server.begin(); ");  //jjj ln
-  server.begin();
-  ethEnabled = true;
-
-  Serial.print(millis());
-  Serial.print(F("ms: Started Ethernet. Local IP is "));
+  Serial.println("Ethernet.begin executed. Wating for 5 sec"); 
+  delay(EthStartupDelay);                         // jjjjj instead of countdown, must wait at least @ 5000ms
+  wdt_reset();
+  Serial.println(" Done.");
+  Serial.print("Link hopefully connected. Local IP is ");
   Serial.println(Ethernet.localIP());
+  W5100.setRetransmissionTime(0x07D0);            // reduce wait
+  W5100.setRetransmissionCount(4);
+  server.begin();                                 //jjjjj? why is that here?
+  delay(100);                                     //jjjjj down from 2500
+  ethEnabled = true;
+  wdt_reset();
+}
 
-  PrintSpiPinMode();
-
+void resetEthernet(){ // Resets the ethernet shield. Delays incorporated! Takes about 5.3 seconds.
+  wdt_reset(); // keep WD away
+  Serial.print("Resetting ethernet card...");
+  pinMode(PIN_ETH_RESET, OUTPUT);                 // prepares ETH reset control pin
+  digitalWrite(PIN_ETH_RESET, ETH_RESET);         // reset W5500
+  delay(100);                                     // for 100ms
+  digitalWrite(PIN_ETH_RESET, ETH_NORESET);       // turn off reset, let W5500 boot up
+  delay(100);                                     // for 100ms
+  pinMode(SS,   OUTPUT);
+  digitalWrite (SS, HIGH);                        // select master mode for SPI bus
+  Ethernet.init (SS) ;                            // This pin ChipSelects the W5500 board on the SPI bus
+  delay(100);                                     // jjjjj? is this time delay needed at all? check source?
+  Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
+  Serial.println("Ethernet.begin executed. Wating for 5 sec"); 
+  delay(5000);                                    // jjjjj instead of countdown, must wait at least 5000ms
+  wdt_reset();
+  W5100.setRetransmissionTime(0x07D0);            // reduce wait
+  W5100.setRetransmissionCount(4);                // reduce retries
+  Serial.println("Done.");
 }
 
 // Turns off power for network components to save power
 void disableEthernet() {
-  Serial.println();
   Serial.print(getTimeWithZeros());
   Serial.println(F(": disableEthernet() called."));
-
-  if (keepUbiquitiOn and isDaytime) {
-    // Leave it all on! Mostly for testing.
-    Serial.println(F("Leaving Ethernet on because of keepUbiquitiOn flag."));
-    return;
-  }
+  
   if (hour() == 11 and minute() > 48) {
     // Leave it all on for ~10 minutes, once a day. Just-in-case.
     Serial.println(F("Leaving Ethernet on from 11:50 to noon"));
     return;
   }
-
-#ifdef TENMINUTEDAY
-  // For debugging lets leave the ethernet on
-  Serial.println(F("Leaving Ethernet on for #TENMINUTEDAY"));
-  return;
-#endif
   
   incomingClient.stop();
   client.stop();
 
-  //print the pinmodes first
-  PrintSpiPinMode();
+  ethernetPowerOff();                             // Turn off Ethernet shield
 
-//jjj20f       Turn off Ethernet shield
-//             Unlike regular boots, the Ethernet shield's SPI pins will be active after a reset because of the Ariadne Bootloader.
-//             When powering down the Ethernet shield, all connected pins must be set to low or preferrably inputs without pullups
-
-  // turn off SPI machine 
-  SPI.end(); 
-  pinMode(MOSI, INPUT);                    //             prevents leakage through ESD diodes
-  pinMode(MISO, INPUT);                    //             prevents leakage through ESD diodes
-  pinMode(SCK,  INPUT);                    //             prevents leakage through ESD diodes
-  pinMode(SS,   INPUT);                    //             prevents leakage through ESD diodes
-
-  pinMode(PIN_ETH_CONTROL, OUTPUT);                      // prepares ETH power control pin
-  digitalWrite(PIN_ETH_CONTROL, ETH_DISABLED);           // turns ETH shield off
   ethEnabled = false;
-
 }
 
 void enableWifi() {
-
-  if (wifiEnabled or wifiStartTime) return;
-  Serial.print(F("enableWifi called, wasn't already enabled. Delay seconds: ")); Serial.println(wifiStartupDelay);
-
-  pinMode(PIN_UBIQUITI_CONTROL, OUTPUT);                 // prepares Ubiquiti power control pin
-  digitalWrite(PIN_UBIQUITI_CONTROL, UBIQUITI_ON);  // turns Ubiquiti on
-  wifiStartTime = millis();
   
-  // Rest of enabling happens in loop() where we check that it's been wifiStartupDelay seconds (currently 55, may be out of date)
+  Serial.print("enableWifi() called.");
+  
+  if (wifiEnabled){ 
+    Serial.println("enable Wifi() aborted: Wifi is already enabled.");
+    return;
+  }
+  if (wifiStartTime){
+    Serial.println("enable Wifi() aborted: Wifi is already starting up.");
+    return;
+  }
+  
+  Serial.print(F("Wasn't already enabled. Delay seconds: ")); Serial.println(wifiStartupDelay);
 
+  pinMode(PIN_UBIQUITI_POWER, OUTPUT);                 // prepares Ubiquiti power control pin
+  digitalWrite(PIN_UBIQUITI_POWER, UBIQUITI_ON);  // turns Ubiquiti on
+  wifiStartTime = millis();
+  // Rest of enabling happens in loop() where we check that it's been wifiStartupDelay seconds (currently 55, may be out of date)
+}
+
+void waitForWifi() {
+  while(true){
+    wdt_reset();  
+    if (not (int((millis() - wifiStartTime) / 1000) % 10)) { 
+      Serial.print("Waiting for wifi to start up, it's been "); Serial.print((millis() - wifiStartTime) / 1000,10); Serial.println(" seconds.");
+    }
+    if ((millis() - wifiStartTime) / 1000 > wifiStartupDelay) {
+      Serial.println(" Done waiting! Wifi Enabled.");
+      wifiStartTime = 0;
+      wifiEnabled = true;
+      break;
+    }
+    delay(1000);
+  }
 }
 
 void disableWifi() {
@@ -467,7 +537,7 @@ void disableWifi() {
   Serial.print(getTimeWithZeros());
   Serial.println(F(": disableWifi() called."));
 
-  if (keepUbiquitiOn and isDaytime) {
+  if (keepUbiquitiOn) {
     // do nothing, keep it on!
     Serial.println(F(" Wifi left on due to keepUbiquitiOn flag."));
     return;
@@ -477,12 +547,6 @@ void disableWifi() {
     // do nothing, something has requested the wifi be turned on so we'll leave it on.
     // up to that thing to turn it off after it's done.
     Serial.println(F(" Wifi left on due to wifiStartTime > 0, meaning something is starting up wifi."));
-    return;
-  }
-
-  if (camSnapshot) {
-    // do nothing, a camera snapshot has been requested so we leave wifi on for a bit.
-    Serial.println(F(" Wifi left on due to camera snapshot request."));
     return;
   }
 
@@ -499,8 +563,8 @@ void disableWifi() {
 #endif
 
 
-  pinMode(PIN_UBIQUITI_CONTROL, OUTPUT);                  // prepares Ubiquiti power control pin
-  digitalWrite(PIN_UBIQUITI_CONTROL, UBIQUITI_OFF);  // turns Ubiquiti off
+  pinMode(PIN_UBIQUITI_POWER, OUTPUT);                  // prepares Ubiquiti power control pin
+  digitalWrite(PIN_UBIQUITI_POWER, UBIQUITI_OFF);  // turns Ubiquiti off
   wifiEnabled = false;
   wifiStartTime = 0;
 
@@ -553,8 +617,8 @@ uint8_t getPinMode(uint8_t pin)
 void getRiseSet()
 {
   // Calculate sunrise and sunset, based on Los Angeles. Close enough.
+  // Calculated in minutes of the day. E.g. sunrise at 6 am -> sunrise = 360
   // From http://forum.arduino.cc/index.php/topic,66426.msg487457.html#msg487457
-  usTemp = micros();
   float common = cos( ((month()-1)*30.5+day() + 8 ) / 58.091554);
   sunrise = 349.5 + 66.5 * common;
   sunset =  1078.5 - 69.5 * common;
@@ -566,7 +630,6 @@ void getRiseSet()
   Serial.println();
   Serial.print(F("Sunrise today is at  ")); Serial.print(sunrise / 60); Serial.print(":"); Serial.println(sunrise % 60);
   Serial.print(F("Sunset  today is at " )); Serial.print(sunset  / 60); Serial.print(":"); Serial.println(sunset  % 60);
-  Serial.print(F("  Took ")); Serial.print(micros() - usTemp);  Serial.println(F("us to calculate."));
   Serial.println();
 }
 
@@ -588,6 +651,14 @@ From: http://forum.arduino.cc/index.php?topic=66426.15
     return previousSunday <= 0;
 }
 
+int getTimeZone(void) {
+      if (CheckDST()) {
+        return -7;
+      } else {
+        return -8;
+      }
+}
+
  
 /*-------- NTP code ----------*/
 /*****************************************************************************
@@ -603,30 +674,15 @@ From: http://forum.arduino.cc/index.php?topic=66426.15
 
 time_t getNtpTime()
 {
-  // We don't want to send anything during power save times, for now.
-  if (!wifiEnabled) {
-    Serial.println("   NTP requested, but NO PACKET SENT due to Wifi not enabled or ready.");
-    return 0;
-  }
-  if (disableNTP) {
-    Serial.println("   NTP requested, but disabled via \"const bool disableNTP = true;\"");
-    return 0;
-  }
-  Udp.begin(NTPlocalPort); // Moved from setup(), to try stop()ing udp every time.
+  Udp.begin(localPort);
   while (Udp.parsePacket() > 0) ; // discard any previously received packets
-  Serial.println(F("Transmit NTP Request"));
-  msNTPrequest = millis();
-  sendNTPpacket(timeServer);
-  //sendNTPpacket(timeServerIP);
+  Serial.println("Transmit NTP Request");
+  sendNtpPacket(timeServer);
   uint32_t beginWait = millis();
-  // Normal timeout is 1500, but I can't pause that long or weather gets messed up.
-  // FIXME: see about making this check every loop(), for 1500ms before failing, instead of looping here.
-  while (millis() - beginWait < 800) {
+  while (millis() - beginWait < 1500) {
     int size = Udp.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
-      Serial.print(F("   UDP response received "));
-      Serial.print(millis() - msNTPrequest);
-      Serial.println(F("ms later. Parsing for NTP"));
+      Serial.println("Receive NTP Response");
       Udp.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
       unsigned long secsSince1900;
       // convert four bytes starting at location 40 to a long integer
@@ -634,19 +690,18 @@ time_t getNtpTime()
       secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
       secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
       secsSince1900 |= (unsigned long)packetBuffer[43];
-      Udp.stop();
       return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
     }
   }
   Serial.print(F("After waiting "));
-  Serial.print(millis() - msNTPrequest);
+  Serial.print(millis() - beginWait);
   Serial.println(F("ms, No NTP Response :-("));
-  Udp.stop();
+  Udp.stop();	 
   return 0; // return 0 if unable to get the time
 }
 
 // send an NTP request to the time server at the given address (DNS lookup version, see IPAddress() version below)
-void sendNTPpacket(char* address)
+void sendNtpPacket(IPAddress &address)
 {
   // set all bytes in the buffer to 0
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
@@ -661,41 +716,11 @@ void sendNTPpacket(char* address)
   packetBuffer[13]  = 0x4E;
   packetBuffer[14]  = 49;
   packetBuffer[15]  = 52;
-
   // all NTP fields have been given values, now
-  // you can send a packet requesting a timestamp:
-  Serial.print(F("   About to send UDP NTP packet from char* ... "));
-  //wdt_disable();
+  // you can send a packet requesting a timestamp:                 
   Udp.beginPacket(address, 123); //NTP requests are to port 123
   Udp.write(packetBuffer, NTP_PACKET_SIZE);
   Udp.endPacket();
-  //wdt_enable(WDTO_8S);
-  Serial.println(F("sent (probably)."));
-}
-
-// send an NTP request to the time server at the given address (IP, no-dns version)
-void sendNTPpacket(IPAddress address)
-{
-  // set all bytes in the buffer to 0
-  memset(packetBuffer, 0, NTP_PACKET_SIZE);
-  // Initialize values needed to form NTP request
-  // (see URL above for details on the packets)
-  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
-  packetBuffer[1] = 0;     // Stratum, or type of clock
-  packetBuffer[2] = 6;     // Polling Interval
-  packetBuffer[3] = 0xEC;  // Peer Clock Precision
-  // 8 bytes of zero for Root Delay & Root Dispersion
-  packetBuffer[12]  = 49;
-  packetBuffer[13]  = 0x4E;
-  packetBuffer[14]  = 49;
-  packetBuffer[15]  = 52;
-
-  // all NTP fields have been given values, now
-  // you can send a packet requesting a timestamp:
-  Udp.beginPacket(address, 123); //NTP requests are to port 123
-  Udp.write(packetBuffer, NTP_PACKET_SIZE);
-  Udp.endPacket();
-  Serial.println(F("  UDP NTP packet sent from IPAddress (probably)."));
 }
 
 
@@ -751,6 +776,29 @@ void compareRTCwithNTP() {
   }
 }
 
+
+bool isTimeValid(time_t time_to_check){
+  // Compares time_to_check year to the year of the Software Version Date. If it is more than 1 year before or more then 5 years after, time is not valid!
+  int ttc_year = year(time_to_check);
+  if ((ttc_year >= version_year-1) and (ttc_year <= version_year + 5)) return true;
+  return false;
+}
+
+
+bool setArduinoTimeWithNtp(){
+  // gets time from NTP server but checks validiy before setting Arduino time with it. Returns success as boolean.
+  time_t _ntp_time = getNtpTime();
+  if (_ntp_time == 0) {
+    Serial.println("Setting of Arduino time from NTP failed, because NTP not available!");
+    return false; 
+  }
+  if (!isTimeValid(_ntp_time)) {
+    Serial.println("Setting of Arduino time from NTP failed, because NTP not valid! NTP time is not consistent with software version date.");
+    return false; 
+  }
+  setTime(_ntp_time);
+  return true;
+}
 
 
 String getDateWithZeros() {
@@ -817,4 +865,8 @@ String strMinutesToHHMM(int M) {
   return S;
 }
 
-
+String time_t_to_datetime_string(time_t tt){
+  String dts = (String)year(tt) + "/" + (String)month(tt) + "/" + (String)day(tt) + " ";
+  dts += (String)hour(tt) + ":" + (String)minute(tt) + ":" + (String)second(tt);
+  return dts;
+}
