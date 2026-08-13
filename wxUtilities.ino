@@ -11,7 +11,12 @@ float get_wind_speed()
 {
     #ifdef SIMULATE_WIND_SPEED
       return(SIMULATE_WIND_SPEED);
-    #endif
+    #elif defined(USE_WS85)
+    if (ws85Fresh(30000)) {
+      return ws85SpeedMph();
+    }
+    return windSpeedAvg;
+    #else
     float deltaTime = millis() - lastWindCheck; // (ex: 750ms)
     deltaTime /= 1000.0; //Covert to seconds
     float windSpeed = (float)windClicks / deltaTime; // (ex, 3 clicks / 0.750s = 4 clicks per second)
@@ -22,11 +27,19 @@ float get_wind_speed()
     windSpeed *= 1.492; //4 * 1.492 = 5.968MPH
 
     return(windSpeed);
+    #endif
 }
 
 //Read the wind direction sensor, return heading in degrees
 int get_wind_direction()
 {
+    #ifdef USE_WS85
+    if (ws85Fresh(30000)) {
+      winddirRaw = ws85Direction();
+      return ws85Direction();
+    }
+    return winddir;
+    #else
     unsigned int adc;
 
     # ifndef SIMULATE_WIND_DIRECTION
@@ -59,6 +72,7 @@ int get_wind_direction()
     else if (adc <  1008)  { strWindDir = "W";   return (270); }   // W
     else                   { strWindDir = "ERH"; return (-20); }
     return (-30); // Never get here
+    #endif
 }
 
 
@@ -243,6 +257,12 @@ void initializeEEPROM() {
   minutesBeforeSunrise = eeCharTemp;
   EEPROM.get(eeMinutesAfterSunset, eeCharTemp);
   minutesAfterSunset = eeCharTemp;
+
+#ifdef BENCH_MODE
+  Serial.println(F("BENCH_MODE — staying awake, clearing keep-Ubiquiti EEPROM flag."));
+  keepUbiquitiOn = false;
+  if (EEPROM.read(eeKeepUbiOn)) EEPROM.update(eeKeepUbiOn, false);
+#endif
 }
 
 

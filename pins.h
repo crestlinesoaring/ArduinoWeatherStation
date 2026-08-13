@@ -1,5 +1,24 @@
 // Hardware pin definitions for weather station and cameras etc. 
 // for new GlueBoards GB3,GB4 and GB5, 18 March 2024
+
+// WS85 ultrasonic anemometer on Serial1 (RX1=19, TX1=18). WS85 TX -> Mega pin 19.
+#define USE_WS85
+#define WS85_BAUD 115200
+
+// Bench testing: stay awake, upload over Ethernet every 5 minutes, no Ubiquiti wait. Comment out for field deploy.
+#define BENCH_MODE
+
+void ws85Init();
+void ws85Poll();
+bool ws85Fresh(unsigned long maxAgeMs = 30000);
+bool ws85ConsumeFrame();
+float ws85SpeedMph();
+float ws85GustMph();
+int ws85Direction();
+float ws85TempC();
+float ws85RainMm();
+float ws85CapVoltage();
+float ws85BatVoltage();
 // all connectors (relay, FET, BME etc) are compatible to old base, just the pin assignments of respected functions were changed.
 // Only headers POWER (Vin, GND etc up to SPARE), PWMH (8,9 etc up to SCL), and some of XIO (Extened I/O) are needed to connect GB to Mega
 // see excel sheet for details

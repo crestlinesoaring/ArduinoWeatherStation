@@ -9,7 +9,7 @@
   // They control which hardware components are simulated and define the simulated sensor output values. 
   // Example: if "#define SIMULATE_WIND_SPEED 10.0" is not commented out, the wind speed sensor read routine is ignored and the wind speed will be set to a fixed simulated value of 10.0 mph instead.
   // Do not change the values unless you really know what you are doing!
-  #define SIMULATE_RTC 1784354913 //must use UTC time, simulates the presence of an RTC at startup, assuming the specified time (Unix timestamp). 1784354913 is for Saturday, July 18, 2026 at 6:08:33 AM. Time is then running using Arduinos internal timekeeping.
+//   #define SIMULATE_RTC 1784354913 //must use UTC time, simulates the presence of an RTC at startup, assuming the specified time (Unix timestamp). 1784354913 is for Saturday, July 18, 2026 at 6:08:33 AM. Time is then running using Arduinos internal timekeeping.
 //   #define SIMULATE_WIND_SPEED 10.0 // Sets the currentSpeed variable. Default is 10.0 mph.
 //   #define SIMULATE_WIND_DIRECTION 920 // Sets the local adc variable in get_wind_direction() which is in ADC counts. Default is 920 which corresponds to North.
 //   #define SIMULATE_INA219A_SOLAR_VOLTS 15.0 // Sets ina219a_solar_volts variable. Default value is 15.0 V, which simulates ok sun on solar panel in terms of voltage.
@@ -42,8 +42,8 @@
 #include <Adafruit_INA219_5A.h>  // Contained in the project folder (Adafruit_INA219_5A.zip). For Voltage/Current sensor. Customized to easure currents up to 5 Amps.
 
 // Other header files, included in the sketch-folder. Work out of the box, no action required.
+#include "pins.h"      // Header file for hardware dependent variables (must precede Marshall.h for BENCH_MODE)
 #include "Marshall.h"  // Site-specific parameters that cannot currently be published
-#include "pins.h"      // Header file for hardware dependent variables. Some hardware versions have different devices on different pins.
 
 
 // OTHER DEBUGGING SETTINGS:
@@ -544,7 +544,16 @@ void setup()
 
   pinMode(STAT1, OUTPUT); //Status LED Blue
 
+#ifndef USE_WS85
   pinMode(WSPEED, INPUT); // input from wind meters windspeed sensor
+#endif
+
+#ifdef USE_WS85
+  ws85Init();
+  Serial.print(F("WS85 wind sensor on Serial1 @ "));
+  Serial.print(WS85_BAUD);
+  Serial.println(F(" baud"));
+#endif
 
   pinMode(PIN_CamNorth_POWER, OUTPUT); //jj 22b set camera power control pins to output
   pinMode(PIN_CamSouth_POWER, OUTPUT); //jj 22b set camera power control pins to output
@@ -565,7 +574,7 @@ void setup()
 
   //Setup BME280 temperatue and humidity sensor A
   Serial.print(F("Starting BME280a external Temperature and Humidity sensor A, status: 0x")); usTemp = micros(); //jjjexternal 
-  bme280a.settings.commInterface = I2C_MODE;
+  bme280a.settings.commInterface = kSfeI2CMode;
   bme280a.settings.I2CAddress = bme280a_HWaddr;
   bme280a.settings.runMode = 3;
   bme280a.settings.tempOverSample = 1;  //oversample rate: 1-5 equate to 1, 2, 4, 8, 16
@@ -576,7 +585,7 @@ void setup()
 
   //Setup BME280 temperatue and humidity sensor B
   Serial.print(F("Starting BME280b internal Temperature & Humidity sensor B, status: 0x")); usTemp = micros();
-  bme280b.settings.commInterface = I2C_MODE;
+  bme280b.settings.commInterface = kSfeI2CMode;
   bme280b.settings.I2CAddress = bme280b_HWaddr;
   bme280b.settings.runMode = 3;
   bme280b.settings.tempOverSample = 1;  //oversample rate: 1-5 equate to 1, 2, 4, 8, 16
@@ -591,7 +600,7 @@ void setup()
 
   // attach external interrupt pins to IRQ functions
   // jjj 22a attachInterrupt(0, rainIRQ, FALLING);
-  #ifndef SIMULATE_WIND_SPEED // Attach interrupt for wind clicks only if sensor is available 
+  #if !defined(SIMULATE_WIND_SPEED) && !defined(USE_WS85)
     attachInterrupt(digitalPinToInterrupt(WSPEED), wspeedIRQ, FALLING); // jjj 22a // jjj 22b 
   #endif
   //attachInterrupt(digitalPinToInterrupt(18), pin18IRQ, FALLING);
@@ -664,7 +673,7 @@ void setup()
     // If we have a working RTC, let's just use it. Every few minutes we'll check for NTP too.
     rtc_available = true;
 	Serial.println(F("RTC selected as time source. Will be synchronized via NTP during during first data upload."));
-    setSyncProvider(RTC.get);
+    setSyncProvider([](){return RTC.get();});
     setSyncInterval(300);           // Update system time often because it actually slews pretty fast; 4 second an hour is typical.
     recentTime = now();
     Serial.println();
@@ -719,8 +728,10 @@ void setup()
   #endif
 
   // Disable Ethernet and Wifi, just in case they were enabled for NTP.
+#ifndef BENCH_MODE
   disableEthernet();
   disableWifi();
+#endif
 
   // Now we can reliably calculate Sunrise and Sunset:
   getRiseSet();
@@ -731,6 +742,7 @@ void setup()
 	  delay(10000);
   } */
 
+#ifndef BENCH_MODE
   // Shut down weather Station immediately if it's night.
   minutesToday = hour() * 60 + minute();
   if ((minutesToday < sunrise - minutesBeforeSunrise)
@@ -739,19 +751,26 @@ void setup()
     Serial.print((sunrise - minutesBeforeSunrise) / 60); Serial.print(":"); Serial.println((sunrise - minutesBeforeSunrise) % 60);
     goToSleep();
   }
+#endif
     	
 
   /* Jump start the wind speed by reading the initial value from the RTC's RAM.
       This gets saved every minute. Since Windspeed is an MMA, it takes almost a minute
-      to get it up to speed. */
+      to get it up to speed. WS85 provides its own speed — RTC seed holds stale pulse values. */
   
-  #ifndef SIMULATE_RTC
+#ifdef USE_WS85
+  windSpeedAvg = 0;
+#elif !defined(SIMULATE_RTC)
   windSpeedAvg = RTC.readRTC(rtcWindSpeed);
-  #else
+#else
   windSpeedAvg = 10.0;
-  #endif
+#endif
 
-  // Is the pin PIN_TELNET_AT_STARTUP pulled to GND? If so, telnet will be activated at beginning of main loop instead of measuring.
+#ifdef BENCH_MODE
+  enableEthernet();
+#endif
+
+  // Is the pin PIN_TELNET_AT_STARTUP pulled to GND?
   #ifdef TELNET_AT_STARTUP //If telenet is forced by defines, don't even check, just do it.
     telnet_at_startup = true;
     Serial.println("TELNET_AT_STARTUP flag is set.");
@@ -794,6 +813,16 @@ void setup()
 
 void loop()
 {
+
+#ifdef USE_WS85
+  ws85Poll();
+#endif
+
+#ifdef BENCH_MODE
+  if (ethEnabled) checkEthIncomingData();
+#else
+  if (wifiEnabled) checkEthIncomingData();
+#endif
   
   //Do "once a second stuff", mostly weather. Also keep track of which minute it is.
   elapsedMillis = millis() - lastSecond;
@@ -809,6 +838,33 @@ void loop()
     wdt_reset(); //I think once a second is enough for our 8 second watchdog.
 
     //Calc the wind speed and direction every second for 120 second to get 2 minute average
+#ifdef USE_WS85
+    if (ws85ConsumeFrame()) {
+      float currentSpeed = ws85SpeedMph();
+      float currentGust = ws85GustMph();
+      int currentDirection = ws85Direction();
+
+      windspeedmph = currentSpeed;
+
+      if (windSpeedAvg == 0) windSpeedAvg = currentSpeed;
+      float windInc = currentSpeed / WIND_SPEED_AVG_SIZE;
+      float windDec = windSpeedAvg / WIND_SPEED_AVG_SIZE;
+      windSpeedAvg = windSpeedAvg - windDec + windInc;
+
+      if (currentGust > windgust_10m[minutes_10m]) {
+        windgust_10m[minutes_10m] = currentGust;
+        windgustdirection_10m[minutes_10m] = currentDirection;
+      }
+      if (currentGust > windgust_5m[minutes_5m]) {
+        windgust_5m[minutes_5m] = currentGust;
+        windgustdirection_5m[minutes_5m] = currentDirection;
+      }
+      if (currentGust > windgustmph) {
+        windgustmph = currentGust;
+        windgustdir = currentDirection;
+      }
+    }
+#else
     float currentSpeed;
     currentSpeed = get_wind_speed();
 
@@ -839,10 +895,12 @@ void loop()
         windgustmph = currentSpeed;
         windgustdir = currentDirection;
     }
+#endif
 
     // Wifi takes ~64 to 80 seconds to come alive, check every second to see if Wifi's ready yet.
     // Use millis() instead of now() because early on (before RTC is set up), now() is invalid.
     // wifiStartime is the time when enableWifi() was called. It's non-zero as long as WiFi starts up.
+#ifndef BENCH_MODE
     if (wifiStartTime) { 
       if (not (int((millis() - wifiStartTime) / 1000) % 10)) { 
         Serial.print("Waiting for wifi to start up, it's been "); Serial.print((millis() - wifiStartTime) / 1000,10); Serial.println(" seconds.");
@@ -853,6 +911,7 @@ void loop()
         wifiEnabled = true;
       } 
     }
+#endif
 
     // Once-a-minute tasks; seconds are incremented at the top of loop() and may be > 59 until we get here. Hope that's okay!
 
@@ -946,6 +1005,7 @@ void loop()
       }
 
     
+#ifndef BENCH_MODE
      /* * * * * * * * * * * * * * * * * *
       *  S H U T   D O W N
       *  S H U T   D O W N
@@ -979,6 +1039,7 @@ void loop()
       if (shut_down_flag) {
         goToSleep();
       }
+#endif
 
      /* * * * * * * * * * * * * * * * * * * * * * * * *
       *  S O L A R   P A N E L S
@@ -1034,7 +1095,14 @@ void loop()
     
     if (justBooted) {
       //Once the time is reporting that it's synced and it's been at least 15 secs since boot, start reporting weather.
+#ifdef BENCH_MODE
+      if (seconds > 15) {
+        justBooted = false;
+        justRestarted = false;
+      }
+#else
       if ((seconds > 15) and (timeStatus() == timeSet)) justBooted = false;
+#endif
     } else {
       if (lastRealMinute != minute()) { // new minute! Let's party.
         lastRealMinute = minute();
@@ -1043,6 +1111,7 @@ void loop()
         wxStringCache[minute() % 10] = tempWeatherString;
         ina219a_solar_MMAloops = 0;  //Reset to zero after upload (even if not successful)
 
+#ifndef BENCH_MODE
         // Send once every 5 minutes. During the night, nothing for now.
         if ((minute() % 5 == 4) and (not uploadPending)) {
           uploadPending = true;
@@ -1088,7 +1157,7 @@ void loop()
                     RTC.set(ntp_time_temp);
                     Serial.println("RTC update via NTP successful!");
                     rtc_got_update_from_ntp = true;
-                    setSyncProvider(RTC.get); // Update Arduino time immediately.
+                    setSyncProvider([](){return RTC.get();}); // Update Arduino time immediately.
                   } else{
                     Serial.println("RTC update via NTP failed! Trying again during next data upload.");
                   }
@@ -1112,6 +1181,60 @@ void loop()
           disableEthernet();
           uploadPending = false;
         } // End every 5th minute: if (minute() %5 == 0)
+#else  // BENCH_MODE — upload over Ethernet every 5 minutes, no Ubiquiti wait
+        if ((minute() % 5 == 0) and (millis() > 180000)) {
+          if (not ethEnabled) enableEthernet();
+          if (ethEnabled) {
+            msTemp = millis();
+            if (minute() % 10 == 0) {
+              for (int i = 6; i <= 10; i++) {
+                if (not (wxStringCache[i % 10] == "")) uploadStatus = uploadWeather(wxStringCache[i % 10]);
+              }
+            } else {
+              for (int i = 1; i <= 5; i++) {
+                if (not (wxStringCache[i] == "")) uploadStatus = uploadWeather(wxStringCache[i]);
+              }
+            }
+
+            if (uploadStatus==0) {
+              if (reportWatchdog) {
+                Serial.println(F("  Clearing watchdog EEPROM flag"));
+                reportWatchdog = 0;
+                EEPROM.update(eeWatchdog, 0);
+              }
+              ethLastFailureCode = 0;
+              justRestarted = false;
+            }
+
+            #ifndef SIMULATE_RTC
+              if (rtc_available) {
+                if (!rtc_got_update_from_ntp) {
+                  ntp_time_temp = getNtpTime();
+                  if (isTimeValid(ntp_time_temp)) {
+                    RTC.set(ntp_time_temp);
+                    Serial.println("RTC update via NTP successful!");
+                    rtc_got_update_from_ntp = true;
+                    setSyncProvider([](){return RTC.get();});
+                  } else {
+                    Serial.println("RTC update via NTP failed! Trying again during next data upload.");
+                  }
+                }
+              } else {
+                setArduinoTimeWithNtp();
+              }
+            #endif
+
+            Serial.println("Waiting for incoming Telnet data...");
+            for (int i = 0; i <= waitTimeIncomingClient; i++) {
+              checkEthIncomingData();
+              wdt_reset();
+              delay(1000);
+            }
+          } else {
+            ethConnFails++;
+          }
+        }
+#endif
         
       } // End "new minute()" (clock minute, not runtime minute)
     }
@@ -1227,6 +1350,12 @@ byte uploadWeather(String WeatherString)
   strTemp.toCharArray(fileName, 13);
   //sdLogData(fileName, charPut);
   
+#ifdef BENCH_MODE
+  if (!ethEnabled) {
+    Serial.println(F("uploadWeather() — Ethernet not ready, skipping."));
+    return 50;
+  }
+#else
   if (!wifiEnabled) {
     Serial.println("ABORT DATA UPLOAD: WiFi is not enabled.");
     return 50;
@@ -1241,6 +1370,7 @@ byte uploadWeather(String WeatherString)
 	Serial.println("ABORT DATA UPLOAD: Ethernet power pin is switched off.");
 	return 50;
   }
+#endif
   
   // Connect to CSS website, do a PUT with weather values. Should be called once for every minute of weather data.
   logSome(F("  uploadWeather called, building string. Bytes free: "));
@@ -1278,7 +1408,9 @@ byte uploadWeather(String WeatherString)
 
   client.setTimeout(600); //timeout in ms
   int clientConnectStatus;
+  wdt_reset();
   clientConnectStatus = client.connect(CSSserver, 80);
+  wdt_reset();
   if (clientConnectStatus) {
     logSome(F("Ether client connected for uploadWeather. Mem: "));
     logSome(freeRam());
@@ -1350,8 +1482,10 @@ String getWeatherString() {
   if (windSpeedAvg < 9.95) weatherString += String('0');
   weatherString += String(windSpeedAvg, 1);
   put_windspeed(wxMinute, windSpeedAvg);
+#ifndef USE_WS85
   //Save the wind speed to RTC memory so after a reboot we can jump-start the Moving Average windspeed.
   RTC.writeRTC(rtcWindSpeed, int(windSpeedAvg + 0.5));
+#endif
 
   // 4: wind speed, mph, 5 minute max (gust)
   weatherString += String(charComma);

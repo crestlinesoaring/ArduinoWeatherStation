@@ -7,7 +7,11 @@
  *  Typically stuff like reset requests, maybe update EEPROM values, print current data cache, etc...
  */
 bool checkEthIncomingData() {
-  if (wifiEnabled) {
+#ifdef BENCH_MODE
+  if (!ethEnabled) return false;
+#else
+  if (!wifiEnabled) return false;
+#endif
     usTemp = millis();  // using usTemp so we can use msTemp as a timeout timer below.
     bool timeoutWarningGiven = false;
     bool boolQuitSession = false;
@@ -385,7 +389,6 @@ bool checkEthIncomingData() {
       telnetSeconds = (millis() - usTemp) / 1000;
       return true; // return true if a telnet communication took place
     }
-  }
   return false; //return false if no telnet communication took place
 }
 
@@ -496,6 +499,11 @@ void disableEthernet() {
 }
 
 void enableWifi() {
+
+#ifdef BENCH_MODE
+  Serial.println(F("enableWifi() skipped in BENCH_MODE (Ethernet only)."));
+  return;
+#endif
   
   Serial.print("enableWifi() called.");
   
