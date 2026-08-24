@@ -81,7 +81,7 @@ Adafruit_INA219_5A ina219a_solar(ina219a_solar_HWaddr);     // First  ina219 sen
 Adafruit_INA219_5A ina219b_battery(ina219b_battery_HWaddr);     // Second ina219 sensor: B == Battery
 BME280 bme280a;                                 // First  bme280 sensor: A == inside the mostly-sealed Brain Box
 BME280 bme280b;                                 // Second bme280 sensor: B == outside (someday we'll add this)
-DS3232RTC RTC;
+// RTC is provided by libraries/DS323RTC (extern DS3232RTC RTC)
 
 
 //-=-=-=-=-=-=-=-=-=-= EEPROM MAP of used addresses, MEGA 2560 has 4KB (4096) bytes-=-=-=-=-=-=-=-=-=-=-=-
@@ -574,7 +574,7 @@ void setup()
 
   //Setup BME280 temperatue and humidity sensor A
   Serial.print(F("Starting BME280a external Temperature and Humidity sensor A, status: 0x")); usTemp = micros(); //jjjexternal 
-  bme280a.settings.commInterface = kSfeI2CMode;
+  bme280a.settings.commInterface = I2C_MODE;
   bme280a.settings.I2CAddress = bme280a_HWaddr;
   bme280a.settings.runMode = 3;
   bme280a.settings.tempOverSample = 1;  //oversample rate: 1-5 equate to 1, 2, 4, 8, 16
@@ -585,7 +585,7 @@ void setup()
 
   //Setup BME280 temperatue and humidity sensor B
   Serial.print(F("Starting BME280b internal Temperature & Humidity sensor B, status: 0x")); usTemp = micros();
-  bme280b.settings.commInterface = kSfeI2CMode;
+  bme280b.settings.commInterface = I2C_MODE;
   bme280b.settings.I2CAddress = bme280b_HWaddr;
   bme280b.settings.runMode = 3;
   bme280b.settings.tempOverSample = 1;  //oversample rate: 1-5 equate to 1, 2, 4, 8, 16

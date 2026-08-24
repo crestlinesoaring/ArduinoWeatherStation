@@ -1,0 +1,10 @@
+{
+  "arduino.useArduinoCli": true,
+  "arduino.extraArgs": [
+    "--library", "libraries/Time",
+    "--library", "libraries/DS323RTC",
+    "--library", "libraries/SdFat",
+    "--library", "libraries/SparkFun_BME280",
+    "--library", "libraries/Adafruit_INA219"
+  ]
+}

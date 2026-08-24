@@ -1,0 +1,14 @@
+default_profile: mega
+profiles:
+  mega:
+    notes: Mega 2560 build using vendored libraries in ./libraries, isolated from the Arduino sketchbook.
+    fqbn: arduino:avr:mega
+    platforms:
+      - platform: arduino:avr (1.8.8)
+    libraries:
+      - dir: libraries/Time
+      - dir: libraries/DS323RTC
+      - dir: libraries/SdFat
+      - dir: libraries/SparkFun_BME280
+      - dir: libraries/Adafruit_INA219
+      - Ethernet (2.0.2)
