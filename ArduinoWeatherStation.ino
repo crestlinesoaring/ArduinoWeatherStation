@@ -31,15 +31,13 @@
 #include <EthernetUdp.h>
 #include <utility/W5100.h>
 
-// Third party libraries. Need to be installed in the IDE using 'Tools' -> 'Manage libraries' and follow instructions in comments below
-#include <Time.h> // Search for 'timekeeping', install 'Time' library.
-#include <TimeLib.h> // Included in 'Time' library.
-#include <DS3232RTC.h> // Search and install 'DS3232RTC' library. For the Real-Time-Clock.
-#include <SdFat.h>     // Search and install 'SdFat' library. Reads and writes SD card.
-#include <SparkFunBME280.h>      // Search and install 'SparkFun BME280' library. High precision Temp & Humidity sensor.
-
-// Customized libraries particularly for this project. Need to be installed in the IDE via 'Sketch' -> 'Include library' -> 'Add .ZIP library...'
-#include <Adafruit_INA219_5A.h>  // Contained in the project folder (Adafruit_INA219_5A.zip). For Voltage/Current sensor. Customized to easure currents up to 5 Amps.
+// Third-party libraries from ./libraries (do not use Arduino sketchbook / Library Manager copies).
+#include <Time.h>            // Time 1.5 (Paul Stoffregen / Michael Margolis). TimeLib.h is in the same library.
+#include <TimeLib.h>
+#include <DS3232RTC.h>       // DS3232RTC 1.0 (Jack Christensen, Mar 2013). Folder: libraries/DS323RTC. Provides global RTC.
+#include <SdFat.h>           // SdFat 1.0.14 (Bill Greiman). Not the Adafruit SdFat fork.
+#include <SparkFunBME280.h>  // SparkFun BME280 1.1.0 (uses I2C_MODE, not kSfeI2CMode from 2.x).
+#include <Adafruit_INA219_5A.h>  // Adafruit INA219_5A 1.0.0 (crestlinesoaring fork). Customized for 5 A.
 
 // Other header files, included in the sketch-folder. Work out of the box, no action required.
 #include "pins.h"      // Header file for hardware dependent variables (must precede Marshall.h for BENCH_MODE)
