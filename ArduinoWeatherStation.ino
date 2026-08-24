@@ -1,6 +1,6 @@
 // SOFTWARE VERSION
-#define VERSION_ID "47JLT"  //jjj 19.Jul.2026 flipped I2C address of bme280a and bme280b=internal now .
-#define VERSION_DATE "2024/08/09" //jjj 
+#define VERSION_ID "50TAV"        // tav 24.Aug.2026, added serial ultrasonic Anemometer, add bench_mode flag
+#define VERSION_DATE "2026/08/24" // tav
 
 // HARDWARE SIMULATION SETTINGS:
  #define ENABLE_HARDWARE_SIMULATION // DEBUG: To operate Arduino standalone or only with individual parts of the the entire station, hardware can be simulated. Uncomment this flag to do so. The components to simulate can be chosen below.
