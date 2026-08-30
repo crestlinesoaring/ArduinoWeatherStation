@@ -6,7 +6,7 @@
 #define WS85_BAUD 115200
 
 // Bench testing: stay awake, upload over Ethernet every 5 minutes, no Ubiquiti wait. Comment out for field deploy.
-#define BENCH_MODE
+// #define BENCH_MODE
 
 void ws85Init();
 void ws85Poll();

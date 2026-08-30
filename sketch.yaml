@@ -6,9 +6,10 @@ profiles:
     platforms:
       - platform: arduino:avr (1.8.8)
     libraries:
-      - dir: libraries/Time
-      - dir: libraries/DS323RTC
-      - dir: libraries/SdFat
-      - dir: libraries/SparkFun_BME280
-      - dir: libraries/Adafruit_INA219
-      - Ethernet (2.0.2)
+      # Vendored libraries (versions not pinned; set by ./libraries content)
+      - dir: libraries/Time              # Time 1.5
+      - dir: libraries/DS323RTC          # DS3232RTC (no library.properties)
+      - dir: libraries/SdFat             # SdFat 1.0.14
+      - dir: libraries/SparkFun_BME280   # SparkFun BME280 1.1.0
+      - dir: libraries/Adafruit_INA219   # Adafruit INA219_5A 1.0.0
+      - Ethernet (2.0.2)                 # from library manager (pinned)
