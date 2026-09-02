@@ -1418,11 +1418,13 @@ byte uploadWeather(String WeatherString)
     // Make an HTTP request:
     if (enableEthDump2Serial) { Serial.write(charPut, strPutLength); }
     client.write(charPut, strPutLength); //Better chance of a single packet by using a char[].
+    wdt_reset();
     ethLastMillis = millis();
     client.flush(); //
     delay(200); //jjjp flush
 
     while (client.available()) {
+      wdt_reset(); // feed the watchdog while reading the response; a slow/stalled link must not trip it
       ethLastMillis = millis();
       char c = client.read();
       if (enableEthDump2Serial) Serial.print(c);

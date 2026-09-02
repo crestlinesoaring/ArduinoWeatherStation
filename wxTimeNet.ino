@@ -443,6 +443,11 @@ void enableEthernet() {
   wdt_reset();
   Serial.println("Executing enableEthernet()."); 
   ethernetPowerOn();                              // Activate power supply and SPI bus
+  // W5100.init() short-circuits after its first call (static flag), so Ethernet.begin()
+  // won't reset or re-detect the chip on subsequent power cycles. Force a clean hardware
+  // soft-reset here so the shield isn't left in a stale state that makes the socket layer hang.
+  W5100.softReset();
+  wdt_reset();
   Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
   Serial.println("Ethernet.begin executed. Wating for 5 sec"); 
   delay(EthStartupDelay);                         // jjjjj instead of countdown, must wait at least @ 5000ms
