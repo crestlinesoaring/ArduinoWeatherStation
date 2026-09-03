@@ -33,7 +33,7 @@
 
 // Third-party libraries from ./libraries (do not use Arduino sketchbook / Library Manager copies).
 #include <Time.h>            // Time 1.5 (Paul Stoffregen / Michael Margolis). TimeLib.h is in the same library.
-#include <TimeLib.h>
+// #include <TimeLib.h>
 #include <DS3232RTC.h>       // DS3232RTC 1.0 (Jack Christensen, Mar 2013). Folder: libraries/DS323RTC. Provides global RTC.
 #include <SdFat.h>           // SdFat 1.0.14 (Bill Greiman). Not the Adafruit SdFat fork.
 #include <SparkFunBME280.h>  // SparkFun BME280 1.1.0 (uses I2C_MODE, not kSfeI2CMode from 2.x).
