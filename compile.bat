@@ -7,6 +7,18 @@ REM independent of sketch.yaml / --profile handling.
 SET "ROOT=%~dp0"
 cd /d "%ROOT%"
 
+REM Ensure git submodules (vendored libraries) are checked out, then verify
+REM each vendored folder actually exists -- otherwise arduino-cli silently
+REM falls back to the Arduino sketchbook / arduino15 libraries.
+git submodule update --init --recursive 2>nul
+for %%L in (Time DS323RTC SdFat SparkFun_BME280 Adafruit_INA219) do (
+    if not exist "%ROOT%libraries\%%L" (
+        echo ERROR: missing vendored library "libraries\%%L".
+        echo        Run: git submodule update --init --recursive
+        exit /b 1
+    )
+)
+
 set "moved="
 if exist "sketch.yaml" (
     ren "sketch.yaml" "sketch.yaml.off"
