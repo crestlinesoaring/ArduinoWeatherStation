@@ -1,6 +1,6 @@
 // SOFTWARE VERSION
 #define VERSION_ID "50TAV"        // tav 24.Aug.2026, added serial ultrasonic Anemometer, add bench_mode flag
-#define VERSION_DATE "2026/08/24" // tav
+#define VERSION_DATE "2026/09/03" // tav
 
 // HARDWARE SIMULATION SETTINGS:
  #define ENABLE_HARDWARE_SIMULATION // DEBUG: To operate Arduino standalone or only with individual parts of the the entire station, hardware can be simulated. Uncomment this flag to do so. The components to simulate can be chosen below.
@@ -10,7 +10,7 @@
   // Example: if "#define SIMULATE_WIND_SPEED 10.0" is not commented out, the wind speed sensor read routine is ignored and the wind speed will be set to a fixed simulated value of 10.0 mph instead.
   // Do not change the values unless you really know what you are doing!
 //   #define SIMULATE_RTC 1784354913 //must use UTC time, simulates the presence of an RTC at startup, assuming the specified time (Unix timestamp). 1784354913 is for Saturday, July 18, 2026 at 6:08:33 AM. Time is then running using Arduinos internal timekeeping.
-//   #define SIMULATE_WIND_SPEED 10.0 // Sets the currentSpeed variable. Default is 10.0 mph.
+  #define SIMULATE_WIND_SPEED 10.0 // Sets the currentSpeed variable. Default is 10.0 mph.
 //   #define SIMULATE_WIND_DIRECTION 920 // Sets the local adc variable in get_wind_direction() which is in ADC counts. Default is 920 which corresponds to North.
 //   #define SIMULATE_INA219A_SOLAR_VOLTS 15.0 // Sets ina219a_solar_volts variable. Default value is 15.0 V, which simulates ok sun on solar panel in terms of voltage.
  //  #define SIMULATE_INA219A_SOLAR_MA 50.0 // Sets ina219a_solar_ma variable. Default value is 50.0 mA, which simulates ok sun on solar panel in terms of current.
