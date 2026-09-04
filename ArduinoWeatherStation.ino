@@ -1414,6 +1414,7 @@ byte uploadWeather(String WeatherString)
     logSome(freeRam());
     logSome(", connect status: ");
     logOneLine(clientConnectStatus);
+    logOneLine(charPut);
 
     // Make an HTTP request:
     if (enableEthDump2Serial) { Serial.write(charPut, strPutLength); }

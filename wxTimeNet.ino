@@ -488,6 +488,8 @@ void resetEthernet(){ // Resets the ethernet shield. Delays incorporated! Takes 
 
 // Turns off power for network components to save power
 void disableEthernet() {
+  Serial.println("leaving ethernet on");
+  return;
   Serial.print(getTimeWithZeros());
   Serial.println(F(": disableEthernet() called."));
   
