@@ -1,6 +1,6 @@
 // SOFTWARE VERSION
-#define VERSION_ID "50TAV"        // tav 24.Aug.2026, added serial ultrasonic Anemometer, add bench_mode flag
-#define VERSION_DATE "2026/08/24" // tav
+#define VERSION_ID "50TAV"        // added serial ultrasonic Anemometer, add bench_mode flag
+#define VERSION_DATE "2026/09/05" // 
 
 // HARDWARE SIMULATION SETTINGS:
  #define ENABLE_HARDWARE_SIMULATION // DEBUG: To operate Arduino standalone or only with individual parts of the the entire station, hardware can be simulated. Uncomment this flag to do so. The components to simulate can be chosen below.
@@ -222,7 +222,8 @@ const char charComma = ',';       //Save memory with Serial.print(charComma) ins
 //const char compile_date[] = __DATE__ " " __TIME__;
 bool telnet_at_startup = false;
 bool rtc_available = true;
-const int version_year = atoi(strtok(VERSION_DATE,'/')); 
+char versionDateBuf[] = VERSION_DATE;
+  const int version_year = atoi(strtok(versionDateBuf, "/")); 
 
 // Local variables used during shut down checks:
 bool shut_down_flag = false;     // Temporarily used flag to check shut down criteria. Do some stuff different.
@@ -1160,7 +1161,7 @@ void loop()
 
             // Check for incoming connections for a few seconds. This isn't super clean, but it's easy.
             Serial.println("Waiting for incoming Telnet data...");
-            for (int i = 0; i <= waitTimeIncomingClient; i++){
+            for (unsigned int i = 0; i <= waitTimeIncomingClient; i++){
               checkEthIncomingData();
               wdt_reset();
               delay(1000);
@@ -1216,7 +1217,7 @@ void loop()
             #endif
 
             Serial.println("Waiting for incoming Telnet data...");
-            for (int i = 0; i <= waitTimeIncomingClient; i++) {
+            for (unsigned int i = 0; i <= waitTimeIncomingClient; i++) {
               checkEthIncomingData();
               wdt_reset();
               delay(1000);
@@ -1443,7 +1444,6 @@ byte uploadWeather(String WeatherString)
 // Test with building strings, to use for the website request.
 String getWeatherString() {
   String weatherString = "";
-  int tempc = RTC.temperature();
   byte wxMinute = minute();
   wxCache_lastSaved = wxMinute;
 

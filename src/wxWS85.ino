@@ -26,7 +26,7 @@ static bool ws85HaveCapV = false;
 static bool ws85HaveBatV = false;
 static bool ws85FrameReady = false;
 
-static float ws85ParseVolts(const String &val) {
+float ws85ParseVolts(const String &val) {
   String s = val;
   s.trim();
   if (s.endsWith("V") || s.endsWith("v")) {
@@ -36,7 +36,7 @@ static float ws85ParseVolts(const String &val) {
   return s.toFloat();
 }
 
-static void ws85ResetFrame() {
+void ws85ResetFrame() {
   ws85HaveDir = false;
   ws85HaveSpeed = false;
   ws85HaveGust = false;
@@ -46,7 +46,7 @@ static void ws85ResetFrame() {
   ws85HaveBatV = false;
 }
 
-static void ws85PrintReading() {
+void ws85PrintReading() {
   if (!ws85HaveDir || !ws85HaveSpeed) return;
 
   Serial.print(F("WS85 rx: dir="));
@@ -90,7 +90,7 @@ static void ws85PrintReading() {
   ws85FrameReady = true;
 }
 
-static void ws85ParseLine(const String &line) {
+void ws85ParseLine(const String &line) {
   if (line.startsWith("==========")) {
     if (line.indexOf("WS85") >= 0) {
       ws85ResetFrame();

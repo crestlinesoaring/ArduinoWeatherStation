@@ -122,9 +122,7 @@ void printDigits(int digits){
 void handleSerial() {
   // If there's serial data waiting, process it here.
   while (Serial.available()) {
-
-    char c = Serial.read();
-    
+    Serial.read();
   }
 }
 

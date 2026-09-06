@@ -676,7 +676,7 @@ void Adafruit_INA219_5A::setAmpAverage() {
   wireReadRegister(INA219_REG_CONFIG, &value);
 
   // change out the bits to average 128 samples at 12 bits per sample
-  value = value & ~INA219_CONFIG_SADCRES_MASK | INA219_CONFIG_SADCRES_12BIT_128S_69MS;
+  value = (value & ~INA219_CONFIG_SADCRES_MASK) | INA219_CONFIG_SADCRES_12BIT_128S_69MS;
 
   // write the changed config value back again
   wireWriteRegister(INA219_REG_CONFIG, value);
@@ -696,7 +696,7 @@ void Adafruit_INA219_5A::setVoltAverage() {
   wireReadRegister(INA219_REG_CONFIG, &value);
 
   // change out the bits to average 128 samples at 12 bits per sample
-  value = value & ~INA219_CONFIG_BADCRES_MASK | INA219_CONFIG_BADCRES_12BIT_128S_69MS ;
+  value = (value & ~INA219_CONFIG_BADCRES_MASK) | INA219_CONFIG_BADCRES_12BIT_128S_69MS ;
 
   // write the changed config value back again
   wireWriteRegister(INA219_REG_CONFIG, value);

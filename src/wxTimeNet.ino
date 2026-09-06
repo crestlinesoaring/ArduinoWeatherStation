@@ -35,7 +35,6 @@ bool checkEthIncomingData() {
           while(incomingClient.available()) incomingClient.read(); //clean buffer just to be safe
           char fileName[13];
           String strFileName;
-          int i;
           int rtcSetStatus;
           // Echoing disabled by JLT 2023
           // Serial.write(c);
