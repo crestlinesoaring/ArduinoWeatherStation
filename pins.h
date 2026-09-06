@@ -8,6 +8,9 @@
 // Bench testing: stay awake, upload over Ethernet every 5 minutes, no Ubiquiti wait. Comment out for field deploy.
 // #define BENCH_MODE
 
+// Debug: skip the night-time deepest power save (goToSleep) entirely.
+#define DONT_SLEEP
+
 void ws85Init();
 void ws85Poll();
 bool ws85Fresh(unsigned long maxAgeMs = 30000);

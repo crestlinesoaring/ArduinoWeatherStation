@@ -270,6 +270,11 @@ void goToSleep(){
   
   // Disables the entire station until next hardware reset.
 
+#ifdef DONT_SLEEP
+  Serial.println(F("DONT_SLEEP is set, skipping sleep!"));
+  return;
+#endif
+
   keepUbiquitiOn = false;
   EEPROM.update(eeKeepUbiOn, false);
   disableWifi();
