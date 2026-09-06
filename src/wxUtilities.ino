@@ -11,7 +11,7 @@ float get_wind_speed()
 {
     #ifdef SIMULATE_WIND_SPEED
       return(SIMULATE_WIND_SPEED);
-    #elif defined(USE_WS85)
+    #elif defined(ANEMO_WS85)
     if (ws85Fresh(30000)) {
       return ws85SpeedMph();
     }
@@ -33,7 +33,7 @@ float get_wind_speed()
 //Read the wind direction sensor, return heading in degrees
 int get_wind_direction()
 {
-    #ifdef USE_WS85
+    #ifdef ANEMO_WS85
     if (ws85Fresh(30000)) {
       winddirRaw = ws85Direction();
       return ws85Direction();

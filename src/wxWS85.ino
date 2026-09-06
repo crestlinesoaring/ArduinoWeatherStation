@@ -3,7 +3,7 @@
  * Connect WS85 TX to Mega Serial1 RX (pin 19). Common GND required.
  */
 
-#ifdef USE_WS85
+#ifdef ANEMO_WS85
 
 #define WS85_SERIAL Serial1
 

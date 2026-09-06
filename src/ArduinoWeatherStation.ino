@@ -3,7 +3,9 @@
 #define VERSION_DATE "2026/09/05" // 
 
 // HARDWARE SIMULATION SETTINGS:
- #define ENABLE_HARDWARE_SIMULATION // DEBUG: To operate Arduino standalone or only with individual parts of the the entire station, hardware can be simulated. Uncomment this flag to do so. The components to simulate can be chosen below.
+// ENABLE_HARDWARE_SIMULATION is set via the -D ENABLE_HARDWARE_SIMULATION build
+// flag in platformio.ini. The individual SIMULATE_* flags below are defined here;
+// uncomment the ones for the components you want to simulate.
 #ifdef ENABLE_HARDWARE_SIMULATION
   // The following flags are relevant only if ENABLE_HARDWARE_SIMULATION is defined. 
   // They control which hardware components are simulated and define the simulated sensor output values. 
@@ -543,11 +545,11 @@ void setup()
 
   pinMode(STAT1, OUTPUT); //Status LED Blue
 
-#ifndef USE_WS85
+#ifndef ANEMO_WS85
   pinMode(WSPEED, INPUT); // input from wind meters windspeed sensor
 #endif
 
-#ifdef USE_WS85
+#ifdef ANEMO_WS85
   ws85Init();
   Serial.print(F("WS85 wind sensor on Serial1 @ "));
   Serial.print(WS85_BAUD);
@@ -599,7 +601,7 @@ void setup()
 
   // attach external interrupt pins to IRQ functions
   // jjj 22a attachInterrupt(0, rainIRQ, FALLING);
-  #if !defined(SIMULATE_WIND_SPEED) && !defined(USE_WS85)
+  #if !defined(SIMULATE_WIND_SPEED) && !defined(ANEMO_WS85)
     attachInterrupt(digitalPinToInterrupt(WSPEED), wspeedIRQ, FALLING); // jjj 22a // jjj 22b 
   #endif
   //attachInterrupt(digitalPinToInterrupt(18), pin18IRQ, FALLING);
@@ -757,7 +759,7 @@ void setup()
       This gets saved every minute. Since Windspeed is an MMA, it takes almost a minute
       to get it up to speed. WS85 provides its own speed — RTC seed holds stale pulse values. */
   
-#ifdef USE_WS85
+#ifdef ANEMO_WS85
   windSpeedAvg = 0;
 #elif !defined(SIMULATE_RTC)
   windSpeedAvg = RTC.readRTC(rtcWindSpeed);
@@ -813,7 +815,7 @@ void setup()
 void loop()
 {
 
-#ifdef USE_WS85
+#ifdef ANEMO_WS85
   ws85Poll();
 #endif
   //Do "once a second stuff", mostly weather. Also keep track of which minute it is.
@@ -830,7 +832,7 @@ void loop()
     wdt_reset(); //I think once a second is enough for our 8 second watchdog.
 
     //Calc the wind speed and direction every second for 120 second to get 2 minute average
-#ifdef USE_WS85
+#ifdef ANEMO_WS85
     if (ws85ConsumeFrame()) {
       float currentSpeed = ws85SpeedMph();
       float currentGust = ws85GustMph();
@@ -1473,7 +1475,7 @@ String getWeatherString() {
   if (windSpeedAvg < 9.95) weatherString += String('0');
   weatherString += String(windSpeedAvg, 1);
   put_windspeed(wxMinute, windSpeedAvg);
-#ifndef USE_WS85
+#ifndef ANEMO_WS85
   //Save the wind speed to RTC memory so after a reboot we can jump-start the Moving Average windspeed.
   RTC.writeRTC(rtcWindSpeed, int(windSpeedAvg + 0.5));
 #endif

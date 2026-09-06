@@ -2,15 +2,13 @@
 // for new GlueBoards GB3,GB4 and GB5, 18 March 2024
 
 // WS85 ultrasonic anemometer on Serial1 (RX1=19, TX1=18). WS85 TX -> Mega pin 19.
-// USE_WS85 is set by the PlatformIO build flag of the mega-ws85 env (see platformio.ini),
-// not defined here. Builds without USE_WS85 use the legacy wind-vane/cup anemometer path.
+// ANEMO_WS85 is set by the PlatformIO build flag (-D ANEMO_WS85) in the mega env
+// (see platformio.ini), not defined here. Builds without ANEMO_WS85 use the
+// legacy wind-vane/cup anemometer path.
 #define WS85_BAUD 115200
 
-// Bench testing: stay awake, upload over Ethernet every 5 minutes, no Ubiquiti wait. Comment out for field deploy.
-// #define BENCH_MODE
-
-// Debug: skip the night-time deepest power save (goToSleep) entirely.
-#define DONT_SLEEP
+// BENCH_MODE and DONT_SLEEP are set via PlatformIO build flags (see platformio.ini),
+// not defined here.
 
 void ws85Init();
 void ws85Poll();

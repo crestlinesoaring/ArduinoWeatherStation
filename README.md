@@ -13,17 +13,30 @@ submodules), so a fresh clone builds without any extra setup.
 
 Build, upload, and monitor:
 
-    pio run                  # build both variants (mega + mega-ws85)
-    pio run -e mega-ws85     # build just one variant
-    pio run -t upload        # upload to the board (both variants)
-    pio run -e mega-ws85 -t upload
+    pio run                  # build the mega firmware
+    pio run -t upload        # upload to the board
     pio device monitor       # serial monitor (115200 baud)
     pio run -t upload -t monitor
 
-Two board variants are defined in `platformio.ini`:
+A single `mega` env is defined in `platformio.ini`. Feature flags are
+commented/uncommented in its `build_flags`:
 
-    mega          default, legacy wind-vane/cup anemometer (no USE_WS85)
-    mega-ws85     WS85 ultrasonic anemometer (define USE_WS85, serial on Serial1)
+    ANEMO_WS85                       WS85 ultrasonic anemometer on Serial1 (on by default)
+    DONT_SLEEP                     skip night-time power save (on by default)
+    BENCH_MODE                     stay awake, upload over Ethernet every 5 minutes
+    ENABLE_HARDWARE_SIMULATION     enables the SIMULATE_* sensor fakes
+
+The individual simulation `SIMULATE_RTC`, `SIMULATE_WIND_SPEED`,
+`SIMULATE_WIND_DIRECTION`, `SIMULATE_INA219A_SOLAR_VOLTS`,
+`SIMULATE_INA219A_SOLAR_MA`, `SIMULATE_INA219B_BATTERY_VOLTS`, and
+`SIMULATE_INA219B_BATTERY_MA` defines are uncommented in the
+HARDWARE SIMULATION SETTINGS block of `ArduinoWeatherStation.ino` (their
+values describe the fake sensor readings: RTC Unix timestamp, wind speed in
+mph, wind direction in ADC counts with 920 = North, solar/battery volts and mA).
+
+These flags were formerly set inside the sketch (`#define` in pins.h and
+ArduinoWeatherStation.ino); the feature toggles are now controlled from
+`platformio.ini` build flags.
 
 Pick the upload port explicitly with `--upload-port` when auto-detection fails:
 
