@@ -815,13 +815,6 @@ void loop()
 #ifdef USE_WS85
   ws85Poll();
 #endif
-
-#ifdef BENCH_MODE
-  if (ethEnabled) checkEthIncomingData();
-#else
-  if (wifiEnabled) checkEthIncomingData();
-#endif
-  
   //Do "once a second stuff", mostly weather. Also keep track of which minute it is.
   elapsedMillis = millis() - lastSecond;
   
