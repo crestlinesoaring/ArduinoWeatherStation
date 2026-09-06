@@ -13,10 +13,17 @@ submodules), so a fresh clone builds without any extra setup.
 
 Build, upload, and monitor:
 
-    pio run                 # build
-    pio run -t upload       # upload to the board
-    pio device monitor      # serial monitor (115200 baud)
-    pio run -t upload -t monitor   # upload then monitor
+    pio run                  # build both variants (mega + mega-ws85)
+    pio run -e mega-ws85     # build just one variant
+    pio run -t upload        # upload to the board (both variants)
+    pio run -e mega-ws85 -t upload
+    pio device monitor       # serial monitor (115200 baud)
+    pio run -t upload -t monitor
+
+Two board variants are defined in `platformio.ini`:
+
+    mega          default, legacy wind-vane/cup anemometer (no USE_WS85)
+    mega-ws85     WS85 ultrasonic anemometer (define USE_WS85, serial on Serial1)
 
 Pick the upload port explicitly with `--upload-port` when auto-detection fails:
 
