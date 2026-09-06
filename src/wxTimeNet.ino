@@ -877,3 +877,19 @@ String time_t_to_datetime_string(time_t tt){
   dts += (String)hour(tt) + ":" + (String)minute(tt) + ":" + (String)second(tt);
   return dts;
 }
+
+// Build the HTTP PUT request used to upload a weather string to the CSS web site.
+// Site name (wxSiteName), path (wxUploadPath) and data subfolder (wxBetaText) are defined in Marshall.h.
+String makeUploadWeatherPut(String wxString) {
+  String strPut;
+  strPut += F("PUT ");
+  strPut += wxUploadPath;
+  strPut += F("?sub=");
+  strPut += wxBetaText;
+  strPut += F("&w=");
+  strPut += wxString;
+  strPut += F(" HTTP/1.1\r\nHost: ");
+  strPut += wxSiteName;
+  strPut += F("\r\nConnection: close\r\n\r\n\r\n");
+  return strPut;
+}

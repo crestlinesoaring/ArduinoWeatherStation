@@ -534,6 +534,44 @@ void setup()
   Serial.print(" starting at ms ");
   Serial.println(millis());
 
+  // Print the compile-time station configuration (see Marshall.h / platformio.ini build_flags)
+  Serial.println(F("Station defines:"));
+  Serial.print(F("  owner=")); Serial.println(wxOwner);
+  Serial.print(F("  hardwareVersion=")); Serial.println(hardwareVersion);
+  Serial.print(F("  batteryType='"));
+  Serial.print((char)BATTERY_TYPE);
+  Serial.println(F("' ('F' = LiFePo, 'A' = AGM)"));
+  Serial.print(F("  dataSubfolder=")); Serial.println(wxBetaText);
+  Serial.print(F("  webSite=")); Serial.println(wxSiteName);
+  Serial.print(F("  uploadPath=")); Serial.println(wxUploadPath);
+  Serial.print(F("  ip=192.168.")); Serial.print(IPq3, DEC); Serial.print(F(".")); Serial.println(IPWX, DEC);
+  Serial.print(F("  gateway=192.168.")); Serial.print(IPq3, DEC); Serial.print(F(".")); Serial.println(IPgw, DEC);
+  Serial.print(F("  mac="));
+  for (byte i = 0; i < 6; i++) {
+    if (mac[i] < 16) Serial.print(F("0"));
+    Serial.print(mac[i], HEX);
+    if (i < 5) Serial.print(F(":"));
+  }
+  Serial.println();
+  Serial.print(F("  ntpServer="));
+  Serial.print(timeServer[0], DEC); Serial.print(F("."));
+  Serial.print(timeServer[1], DEC); Serial.print(F("."));
+  Serial.print(timeServer[2], DEC); Serial.print(F("."));
+  Serial.println(timeServer[3], DEC);
+  Serial.print(F("  localPort=")); Serial.println(localPort);
+#ifdef ANEMO_WS85
+  Serial.println(F("  ANEMO_WS85"));
+#endif
+#ifdef DONT_SLEEP
+  Serial.println(F("  DONT_SLEEP"));
+#endif
+#ifdef BENCH_MODE
+  Serial.println(F("  BENCH_MODE"));
+#endif
+#ifdef ENABLE_HARDWARE_SIMULATION
+  Serial.println(F("  ENABLE_HARDWARE_SIMULATION"));
+#endif
+
   Serial.print("Version year is: "); Serial.println(version_year);
 
   //Enable the WatchDog, 8 second timeout.
