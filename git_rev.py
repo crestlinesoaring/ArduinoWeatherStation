@@ -51,20 +51,26 @@ def write_version_h(root, version_id, version_date, version_datetime, commit_has
 
 
 def write_version_txt(root, version_id, version_date, version_datetime, commit_hash):
-    (root / "VERSION").write_text(
+    content = (
         "# *** AUTO-GENERATED FILE — DO NOT EDIT ***\n"
-        "# Updated by git_rev.py on commit (enable with: git config core.hooksPath .githooks).\n"
-        "# Builds update src/version.h only; this file is not rewritten by pio run.\n"
+        "# Updated by git_rev.py after each commit (run scripts/setup-hooks once per clone).\n"
+        "# Also refreshed on build when HEAD changes; content is identical cross-platform.\n"
         "#\n"
         f"version: {version_id}\n"
         f"commit: {commit_hash}\n"
         f"date: {version_date}\n"
         f"time: {version_datetime}\n"
     )
+    path = root / "VERSION"
+    if path.exists() and path.read_text(encoding="utf-8") == content:
+        return
+    path.write_text(content, encoding="utf-8")
 
 
 def write_build_artifacts(info):
-    write_version_h(project_root(), *info)
+    root = project_root()
+    write_version_h(root, *info)
+    write_version_txt(root, *info)
 
 
 def write_all_artifacts(info):

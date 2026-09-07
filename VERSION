@@ -1,7 +1,8 @@
 # *** AUTO-GENERATED FILE — DO NOT EDIT ***
-# Updated by git_rev.py on each build and on commit (if .githooks is enabled).
+# Updated by git_rev.py after each commit (run scripts/setup-hooks once per clone).
+# Also refreshed on build when HEAD changes; content is identical cross-platform.
 #
-version: 260906-4178cfd
-commit: 4178cfd
+version: 260906-556fef4
+commit: 556fef4
 date: 2026/09/06
-time: 2026/09/06 16:46:03 -0700
+time: 2026/09/07 06:53:44 UTC

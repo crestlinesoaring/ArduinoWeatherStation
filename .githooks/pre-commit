@@ -1,5 +1,0 @@
-#!/bin/sh
-# Regenerate VERSION before each commit so the repo always shows the latest commit info.
-# One-time setup: git config core.hooksPath .githooks
-python git_rev.py --write-files 2>/dev/null || python3 git_rev.py --write-files
-git add VERSION
