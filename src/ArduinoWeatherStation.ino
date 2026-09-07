@@ -1,11 +1,5 @@
-// Current version is committed in the file "VERSION"
-// SOFTWARE VERSION (VERSION_ID and VERSION_DATE set at build time by git_rev.py)
-#ifndef VERSION_ID
-#define VERSION_ID "unknown"
-#endif
-#ifndef VERSION_DATE
-#define VERSION_DATE "unknown"
-#endif
+// Version from git HEAD at build time (generated in src/version.h by git_rev.py)
+#include "version.h"
 
 // HARDWARE SIMULATION SETTINGS:
 // ENABLE_HARDWARE_SIMULATION is set via the -D ENABLE_HARDWARE_SIMULATION build
@@ -536,6 +530,8 @@ void setup()
   Serial.println();
   Serial.println();
   Serial.print(startupMessage); // Set at the top of sketch to make it easier to find & update
+  Serial.print(F(" git="));
+  Serial.println(VERSION_COMMIT);
   Serial.print(" starting at ms ");
   Serial.println(millis());
 

@@ -1,7 +1,7 @@
 ignore
 Marshall.h
 
-# Auto-generated at build time (see VERSION for the committed copy)
+# Auto-generated at build time by git_rev.py
 src/version.h
 
 # PlatformIO build output
