@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -17,45 +18,27 @@ def get_version_info():
     version_id = "unknown"
 
     try:
-        commit_hash = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
+        log_line = subprocess.check_output(
+            ["git", "log", "-1", "--format=%h|%cs|%cI", "HEAD"],
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-        version_datetime = subprocess.check_output(
-            [
-                "git",
-                "log",
-                "-1",
-                "--format=%cd",
-                "--date=format-local:%Y/%m/%d %H:%M:%S %z",
-                "HEAD",
-            ],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        version_date = version_datetime.split()[0]
-        version_date_short = subprocess.check_output(
-            [
-                "git",
-                "log",
-                "-1",
-                "--format=%cd",
-                "--date=format:%y%m%d",
-                "HEAD",
-            ],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
+        commit_hash, commit_date, commit_iso = log_line.split("|")
+        year, month, day = commit_date.split("-")
+        version_date = f"{year}/{month}/{day}"
+        version_date_short = f"{year[2:]}{month}{day}"
         version_id = f"{version_date_short}-{commit_hash}"
+        commit_dt = datetime.fromisoformat(commit_iso.replace("Z", "+00:00"))
+        version_datetime = commit_dt.astimezone(timezone.utc).strftime(
+            "%Y/%m/%d %H:%M:%S UTC"
+        )
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
 
     return version_id, version_date, version_datetime, commit_hash
 
 
-def write_version_files(version_id, version_date, version_datetime, commit_hash):
-    root = project_root()
+def write_version_h(root, version_id, version_date, version_datetime, commit_hash):
     (root / "src" / "version.h").write_text(
         "#pragma once\n"
         "// *** AUTO-GENERATED FILE — DO NOT EDIT ***\n"
@@ -66,9 +49,12 @@ def write_version_files(version_id, version_date, version_datetime, commit_hash)
         f'#define VERSION_COMMIT "{commit_hash}"\n'
     )
 
+
+def write_version_txt(root, version_id, version_date, version_datetime, commit_hash):
     (root / "VERSION").write_text(
         "# *** AUTO-GENERATED FILE — DO NOT EDIT ***\n"
-        "# Updated by git_rev.py on each build and on commit (if .githooks is enabled).\n"
+        "# Updated by git_rev.py on commit (enable with: git config core.hooksPath .githooks).\n"
+        "# Builds update src/version.h only; this file is not rewritten by pio run.\n"
         "#\n"
         f"version: {version_id}\n"
         f"commit: {commit_hash}\n"
@@ -77,19 +63,26 @@ def write_version_files(version_id, version_date, version_datetime, commit_hash)
     )
 
 
-def update_version_files():
-    info = get_version_info()
-    write_version_files(*info)
-    return info[:3]
+def write_build_artifacts(info):
+    write_version_h(project_root(), *info)
+
+
+def write_all_artifacts(info):
+    root = project_root()
+    write_version_h(root, *info)
+    write_version_txt(root, *info)
 
 
 if "--write-files" in sys.argv:
-    update_version_files()
+    write_all_artifacts(get_version_info())
     sys.exit(0)
 
 Import("env")
 
-version_id, version_date, version_datetime = update_version_files()
+version_id, version_date, version_datetime, _commit_hash = get_version_info()
+write_build_artifacts(
+    (version_id, version_date, version_datetime, _commit_hash)
+)
 
 env.Append(
     CPPDEFINES=[
