@@ -1,6 +1,11 @@
-// SOFTWARE VERSION
-#define VERSION_ID "50TAV"        // added serial ultrasonic Anemometer, add bench_mode flag
-#define VERSION_DATE "2026/09/05" // 
+// Current version is committed in the file "VERSION"
+// SOFTWARE VERSION (VERSION_ID and VERSION_DATE set at build time by git_rev.py)
+#ifndef VERSION_ID
+#define VERSION_ID "unknown"
+#endif
+#ifndef VERSION_DATE
+#define VERSION_DATE "unknown"
+#endif
 
 // HARDWARE SIMULATION SETTINGS:
 // ENABLE_HARDWARE_SIMULATION is set via the -D ENABLE_HARDWARE_SIMULATION build
@@ -51,7 +56,7 @@
 
 const String wxVersion = VERSION_ID;
 const bool   enableEthDump2Serial = false;  // Set to false to suppress spitting Ethernet output to serial. Sometimes unprintable characters mess up the terminal.
-const String startupMessage = "UM Weather Station (ver" VERSION_ID VERSION_DATE ")";
+const String startupMessage = "UM Weather Station (ver" VERSION_ID ")";
 const byte wifiStartupDelay = 50; // Seconds to wait for Ubiquity Wifi startup
 const int EthStartupDelay = 5000; // Milliseconds to wait for Ethernet Shield to establish connection before continuing without sending. Used by enableEthernet() in wxTimeNet. Should be larger than 5 sec
 int minutesBeforeSunrise = 70;              // Minutes before sunrise to wake and start sending data. Should consider additional time because reboot happens every hour only -> might miss the sunrise.
@@ -572,7 +577,6 @@ void setup()
   Serial.println(F("  ENABLE_HARDWARE_SIMULATION"));
 #endif
 
-  Serial.print("Version year is: "); Serial.println(version_year);
 
   //Enable the WatchDog, 8 second timeout.
   //wdt_enable(WDTO_8S);

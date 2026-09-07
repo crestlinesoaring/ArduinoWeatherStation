@@ -1,6 +1,9 @@
 ignore
 Marshall.h
 
+# Auto-generated at build time (see VERSION for the committed copy)
+src/version.h
+
 # PlatformIO build output
 .pio/
 .vscode/.browse.c_cpp.db*
