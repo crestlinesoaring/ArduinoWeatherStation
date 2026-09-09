@@ -878,6 +878,20 @@ String time_t_to_datetime_string(time_t tt){
   return dts;
 }
 
+// Compact station-config suffix for the first upload after boot (sub, ip, gw, q3).
+String makeStationDefinesSuffix() {
+  String s;
+  s += F(",");
+  s += wxBetaText;
+  s += F(",q3=");
+  s += IPq3;
+  s += F(",ip=");
+  s += IPWX;
+  s += F(",gw=");
+  s += IPgw;
+  return s;
+}
+
 // Build the HTTP PUT request used to upload a weather string to the CSS web site.
 // Site name (wxSiteName), path (wxUploadPath) and data subfolder (wxBetaText) are defined in Marshall.h.
 String makeUploadWeatherPut(String wxString) {

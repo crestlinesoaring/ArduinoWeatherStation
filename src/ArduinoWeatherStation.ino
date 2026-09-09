@@ -1369,12 +1369,22 @@ byte uploadWeather(String WeatherString)
   //String tempWeatherString = getWeatherString(); //jjj per lance
   String WeatherString2;
   WeatherString2 = WeatherString;
+  if (justRestarted) {
+    static bool stationDefinesSent = false;
+    if (!stationDefinesSent) {
+      String definesSuffix = makeStationDefinesSuffix();
+      WeatherString2 += definesSuffix;
+      Serial.print(F("First upload appending defines"));
+      Serial.println(definesSuffix);
+      stationDefinesSent = true;
+    }
+  }
   //WeatherString2 += String(charComma);
   //WeatherString2 += getTimeWithZeros();
   //WeatherString2 += String(charComma);
   //WeatherString2 += String(millis() - msTemp);
-  char charPut[250];
-  WeatherString2.toCharArray(charPut, 230);
+  const int uploadBufSize = 512; // full HTTP PUT; old 248-byte cap truncated weather data tail (defines, ,R, etc.)
+  char charPut[uploadBufSize];
 
   //Save to SD, even if we don't succeed uploading
   char fileName[13];
@@ -1431,12 +1441,15 @@ byte uploadWeather(String WeatherString)
 //  for (int i = 0; i < 200; i++) {
 //    charPut[i] = 'x';
 //  }
-  charPut[199] = '\0';
-  int strPutLength = strPut.length() + 1;
-  //Serial.print("strPut len: ");
-  //Serial.println(strPutLength);
-  if (strPutLength > 248) strPutLength = 248;
-  strPut.toCharArray(charPut, strPutLength);
+  int strPutLength = strPut.length();
+  if (strPutLength >= uploadBufSize) {
+    Serial.print(F("uploadWeather: PUT truncated from "));
+    Serial.print(strPutLength);
+    Serial.print(F(" to "));
+    Serial.println(uploadBufSize - 1);
+    strPutLength = uploadBufSize - 1;
+  }
+  strPut.toCharArray(charPut, strPutLength + 1);
 
   client.setTimeout(600); //timeout in ms
   int clientConnectStatus;
