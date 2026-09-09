@@ -5,7 +5,16 @@
  * 
  */
 
- 
+// Block for ms milliseconds, resetting the watchdog about every 100 ms.
+void delayWithWdt(unsigned long ms)
+{
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    wdt_reset();
+    delay(100);
+  }
+}
+
 //Returns the instataneous wind speed
 float get_wind_speed()
 {

@@ -444,7 +444,7 @@ void enableEthernet() {
   ethernetPowerOn();                              // Activate power supply and SPI bus
   Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
   Serial.println("Ethernet.begin executed. Wating for 5 sec"); 
-  delay(EthStartupDelay);                         // jjjjj instead of countdown, must wait at least @ 5000ms
+  delayWithWdt(EthStartupDelay);                  // must wait at least @ 5000ms; feed WD during wait
   wdt_reset();
   Serial.println(" Done.");
   Serial.print("Link hopefully connected. Local IP is ");
@@ -452,7 +452,7 @@ void enableEthernet() {
   W5100.setRetransmissionTime(0x07D0);            // reduce wait
   W5100.setRetransmissionCount(4);
   server.begin();                                 //jjjjj? why is that here?
-  delay(100);                                     //jjjjj down from 2500
+  delayWithWdt(100);                              //jjjjj down from 2500
   ethEnabled = true;
   wdt_reset();
 }
@@ -471,7 +471,7 @@ void resetEthernet(){ // Resets the ethernet shield. Delays incorporated! Takes 
   delay(100);                                     // jjjjj? is this time delay needed at all? check source?
   Ethernet.begin(mac, ip, dnsServer, gateway, subnet); // Eth must be initialized after each power up
   Serial.println("Ethernet.begin executed. Wating for 5 sec"); 
-  delay(5000);                                    // jjjjj instead of countdown, must wait at least 5000ms
+  delayWithWdt(5000);                           // must wait at least 5000ms; feed WD during wait
   wdt_reset();
   W5100.setRetransmissionTime(0x07D0);            // reduce wait
   W5100.setRetransmissionCount(4);                // reduce retries
@@ -687,6 +687,7 @@ time_t getNtpTime()
   sendNtpPacket(timeServer);
   uint32_t beginWait = millis();
   while (millis() - beginWait < 1500) {
+    wdt_reset();
     int size = Udp.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
       Serial.println("Receive NTP Response");

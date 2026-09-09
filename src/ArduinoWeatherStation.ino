@@ -514,6 +514,13 @@ void enableWatchdog()
   sei();
 }
 
+// Ethernet socket.cpp calls yield() during blocking sends; AVR ships an empty yield().
+// delay() also calls yield() each millisecond. Feed the watchdog from both paths.
+void yield()
+{
+  wdt_reset();
+}
+
 
 /**********************************************************
  *    _____   ______   _______   _    _   _____  
@@ -1158,12 +1165,14 @@ void loop()
             if (minute() % 10 == 0) {
               // upload 6, 7, 8, 9, 0
               for (int i = 6; i <= 10; i++) {
+                wdt_reset();
                 if (not (wxStringCache[i % 10] == "")) uploadStatus = uploadWeather(wxStringCache[i % 10]);
                 // resetEthernet(); // jlt 2024-01. To prevent crash of socket. Takes about 3 seconds.
               }
             } else {
               // upload 1, 2, 3, 4, 5
               for (int i = 1; i <= 5; i++) {
+                wdt_reset();
                 if (not (wxStringCache[i] == "")) uploadStatus = uploadWeather(wxStringCache[i]);
                 // resetEthernet(); // jlt 2024-01. To prevent crash of socket. Takes about 3 seconds.
               }
@@ -1220,10 +1229,12 @@ void loop()
             msTemp = millis();
             if (minute() % 10 == 0) {
               for (int i = 6; i <= 10; i++) {
+                wdt_reset();
                 if (not (wxStringCache[i % 10] == "")) uploadStatus = uploadWeather(wxStringCache[i % 10]);
               }
             } else {
               for (int i = 1; i <= 5; i++) {
+                wdt_reset();
                 if (not (wxStringCache[i] == "")) uploadStatus = uploadWeather(wxStringCache[i]);
               }
             }
@@ -1427,6 +1438,7 @@ byte uploadWeather(String WeatherString)
   // Preemptively close any open connections, to keep sockets available.
   client.stop();
   while (client.available()) { //read return from socket
+    wdt_reset();
     char c = client.read();
     if (enableEthDump2Serial) Serial.write(c);
   }
@@ -1465,11 +1477,19 @@ byte uploadWeather(String WeatherString)
     // Make an HTTP request:
     if (enableEthDump2Serial) { Serial.write(charPut, strPutLength); }
     client.write(charPut, strPutLength); //Better chance of a single packet by using a char[].
+    wdt_reset();
     ethLastMillis = millis();
-    client.flush(); //
-    delay(200); //jjjp flush
+    // client.flush() can spin forever if the link dies; poll TX drain with a timeout instead.
+    uint32_t flushStart = millis();
+    while (millis() - flushStart < 3000) {
+      wdt_reset();
+      if (client.availableForWrite() >= (int)W5100.SSIZE) break;
+      delay(10);
+    }
+    delayWithWdt(200);
 
     while (client.available()) {
+      wdt_reset();
       ethLastMillis = millis();
       char c = client.read();
       if (enableEthDump2Serial) Serial.print(c);
@@ -1489,6 +1509,7 @@ byte uploadWeather(String WeatherString)
     uploadStatus = 200; // connection failed
   }
 
+  wdt_reset();
   logSome(F("  uploadWeather() finished, free mem: "));
   logOneLine(freeRam());
   return uploadStatus;
